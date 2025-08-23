@@ -7,6 +7,23 @@ CREATE TABLE posts (
     last_synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE tags (
+    id BIGINT PRIMARY KEY,
+    name TEXT NOT NULL,
+    count INT NOT NULL,
+    type INT NOT NULL,
+    ambiguous BOOLEAN NOT NULL,
+    last_synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE post_tags (
+  post_id BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  tag_id  BIGINT NOT NULL REFERENCES tags(id),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (post_id, tag_id)
+);
+CREATE INDEX idx_post_tags_tag ON post_tags(tag_id);
+
 -- A more flexible state table for managing multiple jobs
 CREATE TABLE schedule_state (
     job_name TEXT PRIMARY KEY,
@@ -14,10 +31,11 @@ CREATE TABLE schedule_state (
     last_run_at TIMESTAMPTZ
 );
 
--- Seed the initial states for our two sync jobs
+-- Seed the initial states for our sync jobs
 INSERT INTO schedule_state (job_name, state)
 VALUES
     ('backfill-all', '{"current_page": 1, "retries": 0, "is_active": true}'),
-    ('sync-recent', '{"current_page": 1, "retries": 0}');
+    ('sync-recent', '{"current_page": 1, "retries": 0}'),
+    ('sync-tags', '{"current_page": 1, "retries": 0, "is_active": true}');
 
--- Other tables like `tags`, `post_tags`, `likes` from previous plans go here.
+-- Other tables like `post_tags`, `likes` from previous plans go here.
