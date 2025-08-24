@@ -38,8 +38,9 @@ def read_root():
         "message": "Konakore API is running",
         "endpoints": {
             "posts": {
-                "GET /posts": "获取分页的posts列表 (参数: page, limit)",
-                "GET /posts/{post_id}": "获取指定ID的post详情"
+                "GET /posts": "获取分页的posts列表 (参数: page, limit, liked)",
+                "GET /posts/{post_id}": "获取指定ID的post详情",
+                "PUT /posts/{post_id}/like": "切换指定post的喜欢状态"
             },
             "tags": {
                 "GET /tags": "获取分页的tags列表 (参数: page, limit)",
@@ -49,21 +50,30 @@ def read_root():
         },
         "examples": {
             "posts": "/posts?page=1&limit=20",
+            "liked_posts": "/posts?liked=true&page=1&limit=20",
+            "like_post": "PUT /posts/123/like",
             "tags": "/tags?page=1&limit=20",
             "search": "/search/tags?q=landscape&limit=10"
         }
     }
 
 @app.get("/posts")
-def get_posts(page: int = 1, limit: int = 20):
+def get_posts(page: int = 1, limit: int = 20, liked: bool = None):
     """Fetches a paginated list of posts from the database."""
     offset = (page - 1) * limit
     with get_db_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                "SELECT id, raw_data, is_processed, last_synced_at FROM posts ORDER BY id DESC LIMIT %s OFFSET %s",
-                (limit, offset)
-            )
+            # 只有当liked=True时才过滤，其他情况返回所有posts
+            if liked is True:
+                cur.execute(
+                    "SELECT id, raw_data, is_processed, is_liked, last_synced_at FROM posts WHERE is_liked = TRUE ORDER BY id DESC LIMIT %s OFFSET %s",
+                    (limit, offset)
+                )
+            else:
+                cur.execute(
+                    "SELECT id, raw_data, is_processed, is_liked, last_synced_at FROM posts ORDER BY id DESC LIMIT %s OFFSET %s",
+                    (limit, offset)
+                )
             posts = cur.fetchall()
     return posts
 
@@ -165,3 +175,30 @@ def search_tags(q: str, limit: int = 20):
         "tags_found": len(result),
         "tags": result
     }
+
+
+@app.put("/posts/{post_id}/like")
+def toggle_like_post(post_id: int):
+    """切换指定post的喜欢状态"""
+    with get_db_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # 首先检查post是否存在并获取当前状态
+            cur.execute("SELECT id, is_liked FROM posts WHERE id = %s", (post_id,))
+            post = cur.fetchone()
+            
+            if not post:
+                return {"error": f"Post with id {post_id} not found"}
+            
+            # 切换is_liked状态
+            new_liked_status = not post["is_liked"]
+            cur.execute(
+                "UPDATE posts SET is_liked = %s WHERE id = %s",
+                (new_liked_status, post_id)
+            )
+            conn.commit()
+            
+            return {
+                "post_id": post_id,
+                "is_liked": new_liked_status,
+                "message": f"Post {'liked' if new_liked_status else 'unliked'} successfully"
+            }

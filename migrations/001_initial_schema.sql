@@ -4,6 +4,7 @@ CREATE TABLE posts (
     id BIGINT PRIMARY KEY,
     raw_data JSONB NOT NULL,
     is_processed BOOLEAN DEFAULT FALSE,
+    is_liked BOOLEAN DEFAULT FALSE,
     last_synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
