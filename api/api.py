@@ -2,12 +2,29 @@ import os
 import time
 import psycopg2
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from psycopg2.extras import RealDictCursor
 
 load_dotenv()
 
 app = FastAPI()
+
+# CORS middleware setup
+origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://192.168.0.110:5173",  # NAS frontend
+    "http://192.168.0.110:8080",  # Alternative port
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 def get_db_connection():
     """Establishes a database connection with retry logic."""
@@ -45,7 +62,7 @@ def read_root():
             "tags": {
                 "GET /tags": "获取分页的tags列表 (参数: page, limit)",
                 "GET /tags/{tag_id}": "获取指定ID的tag详情",
-                "GET /search/tags": "搜索tags并返回关联的posts (参数: q[>=2字符], limit)"
+                "GET /search/tags": "搜索tags并返回关联的posts (参数: q[>=2字符], limit, liked)"
             }
         },
         "examples": {
@@ -53,17 +70,28 @@ def read_root():
             "liked_posts": "/posts?liked=true&page=1&limit=20",
             "like_post": "PUT /posts/123/like",
             "tags": "/tags?page=1&limit=20",
-            "search": "/search/tags?q=landscape&limit=10"
+            "search": "/search/tags?q=landscape&limit=10",
+            "search_liked": "/search/tags?q=landscape&liked=true&limit=10"
         }
     }
 
 @app.get("/posts")
-def get_posts(page: int = 1, limit: int = 20, liked: bool = None):
+def get_posts(page: int = 1, limit: int = 100, liked: bool = None):
     """Fetches a paginated list of posts from the database."""
+    # 限制每页最大数量，防止查询过大
+    limit = min(limit, 500)
     offset = (page - 1) * limit
+    
     with get_db_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # 只有当liked=True时才过滤，其他情况返回所有posts
+            # 获取总数
+            if liked is True:
+                cur.execute("SELECT COUNT(*) FROM posts WHERE is_liked = TRUE")
+            else:
+                cur.execute("SELECT COUNT(*) FROM posts")
+            total_count = cur.fetchone()['count']
+            
+            # 获取分页数据
             if liked is True:
                 cur.execute(
                     "SELECT id, raw_data, is_processed, is_liked, last_synced_at FROM posts WHERE is_liked = TRUE ORDER BY id DESC LIMIT %s OFFSET %s",
@@ -75,7 +103,21 @@ def get_posts(page: int = 1, limit: int = 20, liked: bool = None):
                     (limit, offset)
                 )
             posts = cur.fetchall()
-    return posts
+            
+            # 计算总页数
+            total_pages = (total_count + limit - 1) // limit
+            
+            return {
+                "posts": posts,
+                "pagination": {
+                    "current_page": page,
+                    "per_page": limit,
+                    "total_posts": total_count,
+                    "total_pages": total_pages,
+                    "has_next": page < total_pages,
+                    "has_prev": page > 1
+                }
+            }
 
 @app.get("/posts/{post_id}")
 def get_post(post_id: int):
@@ -108,11 +150,12 @@ def get_tag(tag_id: int):
 
 
 @app.get("/search/tags")
-def search_tags(q: str, limit: int = 20):
-    """搜索tags并返回关联的posts
+def search_tags(q: str, page: int = 1, limit: int = 100, liked: bool = None):
+    """搜索tags并返回关联的posts，使用和/posts相同的分页格式
     参数:
-    - q: 搜索关键词 (最少2个字符)
-    - limit: 每个tag返回的posts数量限制 (默认20)
+    - q: 搜索关键词 (最少2个字符)，精确匹配tag名称
+    - page: 页码 (默认1)
+    - limit: 每页posts数量限制 (默认100)
     """
     
     if not q or not q.strip():
@@ -122,59 +165,100 @@ def search_tags(q: str, limit: int = 20):
     if len(q) < 2:
         return {"error": "Search query must be at least 2 characters long"}
     
-    search_term = f"%{q}%"
+    # 限制每页最大数量，防止查询过大
+    limit = min(limit, 500)
+    offset = (page - 1) * limit
     
     with get_db_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # 搜索匹配的tags，硬限制返回数量
+            # 精确匹配tag名称
             cur.execute(
-                """
-                SELECT id, name, count, type, ambiguous 
-                FROM tags 
-                WHERE name ILIKE %s 
-                ORDER BY count DESC
-                LIMIT %s
-                """,
-                (search_term, 10)
+                "SELECT id FROM tags WHERE name = %s",
+                (q,)
             )
-            matching_tags = cur.fetchall()
+            tag = cur.fetchone()
             
-            if not matching_tags:
-                return {"tags": [], "message": "No tags found"}
+            if not tag:
+                return {
+                    "posts": [],
+                    "pagination": {
+                        "current_page": page,
+                        "per_page": limit,
+                        "total_posts": 0,
+                        "total_pages": 0,
+                        "has_next": False,
+                        "has_prev": False
+                    },
+                    "search_query": q
+                }
             
-            # 为每个匹配的tag获取关联的posts
-            result = []
-            for tag in matching_tags:
+            tag_id = tag["id"]
+            
+            # 获取总数
+            if liked is True:
                 cur.execute(
                     """
-                    SELECT p.id, p.raw_data, p.is_processed, p.last_synced_at
+                    SELECT COUNT(*)
+                    FROM posts p
+                    JOIN post_tags pt ON p.id = pt.post_id
+                    WHERE pt.tag_id = %s AND p.is_liked = TRUE
+                    """,
+                    (tag_id,)
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM posts p
+                    JOIN post_tags pt ON p.id = pt.post_id
+                    WHERE pt.tag_id = %s
+                    """,
+                    (tag_id,)
+                )
+            total_count = cur.fetchone()['count']
+            
+            # 获取分页数据
+            if liked is True:
+                cur.execute(
+                    """
+                    SELECT p.id, p.raw_data, p.is_processed, p.is_liked, p.last_synced_at
+                    FROM posts p
+                    JOIN post_tags pt ON p.id = pt.post_id
+                    WHERE pt.tag_id = %s AND p.is_liked = TRUE
+                    ORDER BY p.id DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (tag_id, limit, offset)
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT p.id, p.raw_data, p.is_processed, p.is_liked, p.last_synced_at
                     FROM posts p
                     JOIN post_tags pt ON p.id = pt.post_id
                     WHERE pt.tag_id = %s
                     ORDER BY p.id DESC
-                    LIMIT %s
+                    LIMIT %s OFFSET %s
                     """,
-                    (tag["id"], limit)
+                    (tag_id, limit, offset)
                 )
-                posts = cur.fetchall()
-                
-                result.append({
-                    "tag": {
-                        "id": tag["id"],
-                        "name": tag["name"],
-                        "count": tag["count"],
-                        "type": tag["type"],
-                        "ambiguous": tag["ambiguous"]
-                    },
-                    "posts": posts,
-                    "posts_count": len(posts)
-                })
-    
-    return {
-        "query": q,
-        "tags_found": len(result),
-        "tags": result
-    }
+            posts = cur.fetchall()
+            
+            # 计算总页数
+            total_pages = (total_count + limit - 1) // limit
+            
+            return {
+                "posts": posts,
+                "pagination": {
+                    "current_page": page,
+                    "per_page": limit,
+                    "total_posts": total_count,
+                    "total_pages": total_pages,
+                    "has_next": page < total_pages,
+                    "has_prev": page > 1
+                },
+                "search_query": q
+            }
 
 
 @app.put("/posts/{post_id}/like")
