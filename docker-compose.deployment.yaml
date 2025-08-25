@@ -42,11 +42,15 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    volumes:
+      - /mnt/hd1/Wallpaper:/wallpaper
     environment:
       - POSTGRES_USER=konakore
       - POSTGRES_PASSWORD=secret
       - POSTGRES_DB=konakore
       - PYTHONUNBUFFERED=1
+      - ARIA2_URL=ws://192.168.0.110:6800/jsonrpc
+      - ARIA2_SECRET=p3terx
 
   frontend:
     image: 192.168.0.110:5000/my-konakore-frontend:latest

@@ -3,8 +3,6 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import PhotoSwipeLightbox from 'photoswipe/lightbox';
 import 'photoswipe/style.css';
 import PhotoSwipeFullscreen from 'photoswipe-fullscreen';
-import { filesize } from 'filesize';
-import { format, fromUnixTime, isValid } from 'date-fns';
 
 import SearchBar from '../components/SearchBar';
 import MasonryGrid from '../components/MasonryGrid';
@@ -13,49 +11,16 @@ import PaginationControls from '../components/PaginationControls';
 import SimplePagination from '../components/SimplePagination';
 import LazyImageCard from '../components/LazyImageCard';
 import { getPosts, searchTags } from '../api';
+import { formatFileSize, formatDate } from '../utils/formatters';
+import { getImageUrl, getImageDimensionsText } from '../utils/imageUtils';
+import { 
+  loadTagsFromStorage, 
+  addTagsToCache, 
+  extractTagsFromPosts, 
+  mergeTagsWithCache 
+} from '../utils/tagsCache';
 import { Box, CircularProgress, Typography, Chip } from '@mui/material';
 import { Link as LinkIcon, AspectRatio as SizeIcon, Star as ScoreIcon, DateRange as DateIcon, Storage as FileIcon, Favorite as FavoriteIcon } from '@mui/icons-material';
-
-// 全局tags缓存，只追加不删除
-const globalTagsCache = new Set();
-
-// 从localStorage恢复缓存
-const loadTagsFromStorage = () => {
-  try {
-    const saved = localStorage.getItem('konakore_tags_cache');
-    if (saved) {
-      const tags = JSON.parse(saved);
-      tags.forEach(tag => globalTagsCache.add(tag));
-    }
-  } catch (error) {
-    console.warn('Failed to load tags from localStorage:', error);
-  }
-};
-
-// 保存缓存到localStorage
-const saveTagsToStorage = () => {
-  try {
-    const tags = Array.from(globalTagsCache);
-    localStorage.setItem('konakore_tags_cache', JSON.stringify(tags));
-  } catch (error) {
-    console.warn('Failed to save tags to localStorage:', error);
-  }
-};
-
-// 添加tags到缓存
-const addTagsToCache = (tags) => {
-  let added = false;
-  tags.forEach(tag => {
-    if (!globalTagsCache.has(tag)) {
-      globalTagsCache.add(tag);
-      added = true;
-    }
-  });
-  if (added) {
-    saveTagsToStorage();
-  }
-  return added;
-};
 
 const HomePage = () => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -132,49 +97,12 @@ const HomePage = () => {
     setCurrentPage(1); // 重置到第一页
     // 保持当前搜索和排序选项不变，实现联动
   };
-  // 处理图片 URL
-  const getImageUrl = (url) => {
-    if (!url) return '';
-    
-    const konachanUrl = url.replace('konachan.com', 'konachan.net');
-    return konachanUrl.replace('https://konachan.net', '/konachan-proxy');
-  };
-
   const onImageClick = (index) => {
     // 使用PhotoSwipe API直接打开指定索引的图片
     if (window.currentLightbox) {
       window.currentLightbox.loadAndOpen(index);
     } else {
       console.log('PhotoSwipe lightbox not ready');
-    }
-  };
-
-  // --- UTILITY FUNCTIONS ---
-  const formatFileSize = (bytes) => {
-    if (!bytes) return 'N/A';
-    return filesize(bytes, { 
-      standard: 'jedec',  // 使用 MB 而不是 MiB
-      round: 1 
-    });
-  };
-
-  const formatDate = (dateValue) => {
-    if (!dateValue && dateValue !== 0) return 'N/A';
-    
-    try {
-      // 将Unix时间戳转换为Date对象
-      const date = fromUnixTime(dateValue);
-      
-      // 检查日期是否有效
-      if (!isValid(date)) {
-        return 'Invalid';
-      }
-      
-      // 格式化为 YYYY/MM/DD HH:mm:ss
-      return format(date, 'yyyy/MM/dd HH:mm:ss');
-    } catch (error) {
-      console.warn('Date formatting error:', error, 'Input:', dateValue);
-      return 'Error';
     }
   };
 
@@ -256,30 +184,7 @@ const HomePage = () => {
   const currentPageTags = useMemo(() => {
     if (!postsForGrid?.length) return [];
     
-    const tagSet = new Set();
-    postsForGrid.forEach(post => {
-      // 检查两种可能的tags格式
-      let tags = [];
-      
-      // 格式1: post.tags (数组)
-      if (post.tags && Array.isArray(post.tags)) {
-        tags = post.tags;
-      }
-      // 格式2: post.raw_data.tags (空格分隔的字符串)
-      else if (post.raw_data?.tags && typeof post.raw_data.tags === 'string') {
-        tags = post.raw_data.tags.split(' ').filter(Boolean);
-      }
-      
-      // 添加到Set中去重
-      tags.forEach(tag => {
-        if (tag && typeof tag === 'string' && tag.trim().length > 0) {
-          tagSet.add(tag.trim());
-        }
-      });
-    });
-    
-    // 转换为数组并过滤空值
-    const result = Array.from(tagSet).filter(tag => tag && tag.length > 0);
+    const result = extractTagsFromPosts(postsForGrid);
     
     // 添加到全局缓存
     if (result.length > 0) {
@@ -291,20 +196,7 @@ const HomePage = () => {
 
   // 智能的tags数据源：缓存标签优先，当前页面标签次之
   const availableTags = useMemo(() => {
-    const cachedTags = Array.from(globalTagsCache);
-    const currentTags = currentPageTags;
-    
-    // 合并并去重：缓存的tags在前，当前页面新的tags在后
-    const tagSet = new Set();
-    
-    // 先添加缓存中的tags
-    cachedTags.forEach(tag => tagSet.add(tag));
-    
-    // 再添加当前页面的tags（如果不在缓存中）
-    currentTags.forEach(tag => tagSet.add(tag));
-    
-    // 转换为数组并排序
-    return Array.from(tagSet).sort();
+    return mergeTagsWithCache(currentPageTags);
   }, [currentPageTags]);
 
   // --- PHOTOSWIPE SETUP ---
@@ -503,9 +395,14 @@ const HomePage = () => {
       <Box sx={{ 
         mx: 'auto',
         maxWidth: '100%',
+        minWidth: '100%', // 确保最小宽度
         width: '100%',
         overflow: 'hidden',
-        px: { xs: 1, sm: 2, md: 3 }
+        px: { xs: 1, sm: 2, md: 3 },
+        // 确保即使内容少也占满宽度
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'stretch', // 子元素拉伸占满宽度
       }}>
         {renderContent()}
       </Box>
@@ -613,7 +510,10 @@ const HomePage = () => {
               {/* File Size */}
               <Chip
                 icon={<FileIcon sx={{ color: '#fff !important' }} />}
-                label={formatFileSize(post.raw_data.file_size)}
+                label={post.raw_data.jpeg_file_size === 0 ? 
+                  formatFileSize(post.raw_data.file_size) : 
+                  `${formatFileSize(post.raw_data.jpeg_file_size)} / ${formatFileSize(post.raw_data.file_size)}`
+                }
                 size="small"
                 sx={{
                   backgroundColor: 'rgba(76, 175, 80, 0.8)',
@@ -631,7 +531,7 @@ const HomePage = () => {
               {/* Dimensions */}
               <Chip
                 icon={<SizeIcon sx={{ color: '#fff !important' }} />}
-                label={`${post.raw_data.width}x${post.raw_data.height}`}
+                label={getImageDimensionsText(post.raw_data)}
                 size="small"
                 sx={{
                   backgroundColor: 'rgba(156, 39, 176, 0.8)',
