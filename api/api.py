@@ -1,6 +1,8 @@
 import os
 import time
 import psycopg2
+import requests
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -9,6 +11,10 @@ from psycopg2.extras import RealDictCursor
 load_dotenv()
 
 app = FastAPI()
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # CORS middleware setup
 origins = [
@@ -47,6 +53,37 @@ def get_db_connection():
             else:
                 print("Could not connect to the database after several retries.")
                 raise
+
+
+def trigger_file_sync(action="start"):
+    """触发file_sync服务，忽略错误以保持插件化特性"""
+    try:
+        # 容器间通信，使用服务名
+        file_sync_url = os.getenv('FILE_SYNC_URL', 'http://file_sync:8090')
+        
+        response = requests.post(
+            f"{file_sync_url}/trigger",
+            json={"action": action},
+            timeout=5  # 5秒超时
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            logger.info(f"[API] File sync triggered successfully: {result.get('message', 'Unknown')}")
+            return True
+        else:
+            logger.warning(f"[API] File sync trigger failed with status {response.status_code}: {response.text}")
+            return False
+            
+    except requests.exceptions.Timeout:
+        logger.warning("[API] File sync trigger timeout - service may be slow or unavailable")
+        return False
+    except requests.exceptions.ConnectionError:
+        logger.warning("[API] File sync service unavailable - plugin not running")
+        return False
+    except Exception as e:
+        logger.error(f"[API] File sync trigger error: {e}")
+        return False
 
 @app.get("/")
 def read_root():
@@ -280,6 +317,14 @@ def toggle_like_post(post_id: int):
                 (new_liked_status, post_id)
             )
             conn.commit()
+            
+            # 如果是新增点赞，触发file_sync服务
+            if new_liked_status:
+                trigger_success = trigger_file_sync("start")
+                if trigger_success:
+                    logger.info(f"[API] File sync triggered for liked post {post_id}")
+                else:
+                    logger.warning(f"[API] Failed to trigger file sync for post {post_id}, but like operation succeeded")
             
             return {
                 "post_id": post_id,

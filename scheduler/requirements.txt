@@ -2,4 +2,3 @@ requests
 psycopg2-binary
 schedule
 python-dotenv
-websocket-client
