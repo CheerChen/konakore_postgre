@@ -33,3 +33,5 @@ go.work.sum
 
 # Downloaded files
 data/
+
+.DS_Store

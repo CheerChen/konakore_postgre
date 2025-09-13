@@ -63,9 +63,11 @@ const PaginationControls = ({
               onChange={(e) => onSortChange(e.target.value)}
               disabled={isLoading}
             >
+              <MenuItem value="relevance">按相关度排序</MenuItem>
               <MenuItem value="score">Score (高到低)</MenuItem>
               <MenuItem value="id">ID (新到旧)</MenuItem>
               <MenuItem value="file_size">文件大小 (大到小)</MenuItem>
+              <MenuItem value="resolution">分辨率 (大到小)</MenuItem>
               <MenuItem value="waifu_pillow">宽屏优先</MenuItem>
               <MenuItem value="shuffle">随机排序</MenuItem>
             </Select>

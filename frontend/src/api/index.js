@@ -39,3 +39,8 @@ export const toggleLike = async (postId) => {
   const response = await apiClient.put(`/posts/${postId}/like`);
   return response.data;
 };
+
+export const getUserPreferences = async () => {
+  const response = await apiClient.get('/user-preferences');
+  return response.data;
+};
