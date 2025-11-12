@@ -8,6 +8,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the application code
 COPY api/api.py .
+COPY api/models.py .
+COPY api/utils.py .
+COPY api/routers/ ./routers/
 
 # Expose the port the API will run on
 EXPOSE 3000

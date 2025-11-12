@@ -150,14 +150,14 @@ const HomePage = () => {
     isLoading = searchQueryResults.isLoading;
     isError = searchQueryResults.isError;
     totalPages = searchData?.pagination?.total_pages || 0;
-    totalPosts = searchData?.pagination?.total_posts || 0;
+    totalPosts = searchData?.pagination?.total_items || 0;
   } else {
     const postsData = postsQuery.data;
     posts = postsData?.posts || [];
     isLoading = postsQuery.isLoading;
     isError = postsQuery.isError;
     totalPages = postsData?.pagination?.total_pages || 0;
-    totalPosts = postsData?.pagination?.total_posts || 0;
+    totalPosts = postsData?.pagination?.total_items || 0;
   }
 
   // --- MEMOIZED DATA FOR RENDERING ---
@@ -167,9 +167,9 @@ const HomePage = () => {
     // 合并本地收藏状态到posts数据
     const postsWithUpdatedLikes = posts.map(post => ({
       ...post,
-      is_liked: postsLikeState.hasOwnProperty(post.id) 
+      liked: postsLikeState.hasOwnProperty(post.id) 
         ? postsLikeState[post.id] 
-        : post.is_liked
+        : post.liked
     }));
 
     // 排序逻辑
@@ -183,24 +183,24 @@ const HomePage = () => {
       sortedPosts = tagManager.sortPostsWithBottomPriorityLast(postsWithUpdatedLikes, (a, b) => {
         switch (sortOption) {
           case 'score':
-            return (b.raw_data.score || 0) - (a.raw_data.score || 0);
+            return (b.data.score || 0) - (a.data.score || 0);
           
           case 'id':
             return (b.id || 0) - (a.id || 0);
           
           case 'file_size':
-            return (b.raw_data.file_size || 0) - (a.raw_data.file_size || 0);
+            return (b.data.file_size || 0) - (a.data.file_size || 0);
           
           case 'resolution':
             // 按分辨率（像素总数）从大到小排序
-            const aPixels = (a.raw_data.width || 0) * (a.raw_data.height || 0);
-            const bPixels = (b.raw_data.width || 0) * (b.raw_data.height || 0);
+            const aPixels = (a.data.width || 0) * (a.data.height || 0);
+            const bPixels = (b.data.width || 0) * (b.data.height || 0);
             return bPixels - aPixels;
           
           case 'waifu_pillow':
             // waifu_pillow: 宽高比 > 2 的图片靠前 (width > height * 2)
-            const aRatio = (a.raw_data.width || 0) / (a.raw_data.height || 1);
-            const bRatio = (b.raw_data.width || 0) / (b.raw_data.height || 1);
+            const aRatio = (a.data.width || 0) / (a.data.height || 1);
+            const bRatio = (b.data.width || 0) / (b.data.height || 1);
             const aIsWaifu = aRatio > 2 ? 1 : 0;
             const bIsWaifu = bRatio > 2 ? 1 : 0;
             
@@ -434,11 +434,11 @@ const HomePage = () => {
   useEffect(() => {
     if (lightboxRef.current && postsForGrid.length > 0) {
       const newDataSource = postsForGrid.map(post => ({
-        src: getImageUrl(post.raw_data?.sample_url || post.raw_data?.jpeg_url || post.raw_data?.file_url),
-        msrc: getImageUrl(post.raw_data?.preview_url),
-        w: post.raw_data.width,
-        h: post.raw_data.height,
-        alt: post.raw_data.tags,
+        src: getImageUrl(post.data?.sample_url || post.data?.jpeg_url || post.data?.file_url),
+        msrc: getImageUrl(post.data?.preview_url),
+        w: post.data.width,
+        h: post.data.height,
+        alt: post.data.tags,
         postId: post.id,
       }));
       lightboxRef.current.options.dataSource = newDataSource;
@@ -550,7 +550,7 @@ const HomePage = () => {
               maxWidth: '80vw',
               marginBottom: '16px'
             }}>
-              {post.raw_data.tags?.split(' ').filter(Boolean).map((tag, tagIndex) => {
+              {post.data.tags?.split(' ').filter(Boolean).map((tag, tagIndex) => {
                 const tagColors = getTagColors(tag);
                 const translatedTag = getTagTranslation(tag);
                 return (
@@ -631,9 +631,9 @@ const HomePage = () => {
               {/* File Size */}
               <Chip
                 icon={<FileIcon sx={{ color: '#fff !important' }} />}
-                label={post.raw_data.jpeg_file_size === 0 ? 
-                  formatFileSize(post.raw_data.file_size) : 
-                  `${formatFileSize(post.raw_data.jpeg_file_size)} / ${formatFileSize(post.raw_data.file_size)}`
+                label={post.data.jpeg_file_size === 0 ? 
+                  formatFileSize(post.data.file_size) : 
+                  `${formatFileSize(post.data.jpeg_file_size)} / ${formatFileSize(post.data.file_size)}`
                 }
                 size="small"
                 sx={{
@@ -652,7 +652,7 @@ const HomePage = () => {
               {/* Dimensions */}
               <Chip
                 icon={<SizeIcon sx={{ color: '#fff !important' }} />}
-                label={getImageDimensionsText(post.raw_data)}
+                label={getImageDimensionsText(post.data)}
                 size="small"
                 sx={{
                   backgroundColor: 'rgba(156, 39, 176, 0.8)',
@@ -670,7 +670,7 @@ const HomePage = () => {
               {/* Score */}
               <Chip
                 icon={<ScoreIcon sx={{ color: '#fff !important' }} />}
-                label={post.raw_data.score !== undefined ? post.raw_data.score : 'N/A'}
+                label={post.data.score !== undefined ? post.data.score : 'N/A'}
                 size="small"
                 sx={{
                   backgroundColor: 'rgba(255, 152, 0, 0.8)',
@@ -688,7 +688,7 @@ const HomePage = () => {
               {/* Create Date */}
               <Chip
                 icon={<DateIcon sx={{ color: '#fff !important' }} />}
-                label={formatDate(post.raw_data.created_at)}
+                label={formatDate(post.data.created_at)}
                 size="small"
                 sx={{
                   backgroundColor: 'rgba(96, 125, 139, 0.8)',
@@ -704,7 +704,7 @@ const HomePage = () => {
               />
 
               {/* Liked Status - 只显示状态，不提供交互 */}
-              {(postsLikeState.hasOwnProperty(post.id) ? postsLikeState[post.id] : post.is_liked) && (
+              {(postsLikeState.hasOwnProperty(post.id) ? postsLikeState[post.id] : post.liked) && (
                 <Chip
                   icon={<FavoriteIcon sx={{ color: '#fff !important' }} />}
                   label="已收藏"
