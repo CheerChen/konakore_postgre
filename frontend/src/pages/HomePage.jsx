@@ -247,6 +247,13 @@ const HomePage = () => {
   // --- PHOTOSWIPE SETUP ---
   // 仅在组件挂载时初始化PhotoSwipe
   useEffect(() => {
+    // 幻灯片播放相关状态 - 使用 ref 来持久化状态
+    const slideshowState = {
+      interval: null,
+      isPlaying: false
+    };
+    const SLIDESHOW_DELAY = 3000; // 3秒切换间隔
+
     const lightbox = new PhotoSwipeLightbox({
       pswpModule: () => import('photoswipe'),
       showHideAnimationType: 'fade',
@@ -256,8 +263,91 @@ const HomePage = () => {
 
     new PhotoSwipeFullscreen(lightbox);
 
+    // 幻灯片播放功能
+    const startSlideshow = (pswp) => {
+      if (slideshowState.isPlaying) return;
+      
+      slideshowState.isPlaying = true;
+      updateSlideshowButton(pswp, true);
+      
+      slideshowState.interval = setInterval(() => {
+        const numItems = pswp.getNumItems();
+        if (pswp.currIndex === numItems - 1) {
+          if (pswp.options.loop) {
+            pswp.next(); // 循环播放
+          } else {
+            stopSlideshow(pswp); // 到达最后一张停止
+          }
+        } else {
+          pswp.next();
+        }
+      }, SLIDESHOW_DELAY);
+    };
+
+    const stopSlideshow = (pswp) => {
+      if (!slideshowState.isPlaying) return;
+      
+      slideshowState.isPlaying = false;
+      updateSlideshowButton(pswp, false);
+      
+      if (slideshowState.interval) {
+        clearInterval(slideshowState.interval);
+        slideshowState.interval = null;
+      }
+    };
+
+    const toggleSlideshow = (pswp) => {
+      if (slideshowState.isPlaying) {
+        stopSlideshow(pswp);
+      } else {
+        startSlideshow(pswp);
+      }
+    };
+
+    const updateSlideshowButton = (pswp, playing) => {
+      const button = pswp.element?.querySelector('.pswp__button--slideshow');
+      if (button) {
+        button.classList.toggle('pswp__button--playing', playing);
+        button.setAttribute('aria-pressed', playing ? 'true' : 'false');
+        
+        // 更新 SVG 图标而不破坏事件监听器
+        const svg = button.querySelector('svg');
+        if (svg) {
+          if (playing) {
+            // 暂停图标
+            svg.innerHTML = `<rect x="11" y="8" width="3" height="16"></rect>
+              <rect x="18" y="8" width="3" height="16"></rect>`;
+          } else {
+            // 播放图标
+            svg.innerHTML = `<path d="M12 8 L24 16 L12 24 Z"></path>`;
+          }
+        }
+      }
+    };
+
     lightbox.on('uiRegister', () => {
-      lightbox.pswp.ui.registerElement({
+      const { pswp } = lightbox;
+
+      // 注册幻灯片播放按钮
+      pswp.ui.registerElement({
+        name: 'slideshow-button',
+        className: 'pswp__button--slideshow',
+        order: 8,
+        isButton: true,
+        html: `<svg aria-hidden="true" class="pswp__icn" viewBox="0 0 32 32" width="32" height="32">
+          <path d="M12 8 L24 16 L12 24 Z"></path>
+        </svg>`,
+        title: 'Toggle Slideshow',
+        onClick: (event, el) => {
+          event.preventDefault();
+          event.stopPropagation();
+          toggleSlideshow(pswp);
+          return false;
+        }
+      });
+
+      // 注册自定义标题
+      pswp.ui.registerElement({
         name: 'custom-caption',
         order: 9,
         isButton: false,
@@ -298,6 +388,28 @@ const HomePage = () => {
           setTimeout(() => pswp.dispatch('change'), 50);
         },
       });
+
+      // 监听用户手动操作（拖动图片），暂停幻灯片播放
+      // 注意：不要监听 pointerDown，因为按钮点击也会触发
+      pswp.on('pointerMove', (e) => {
+        // 只在实际拖动时才暂停
+        if (e.originalEvent && slideshowState.isPlaying) {
+          stopSlideshow(pswp);
+        }
+      });
+
+      // 监听键盘事件（空格键控制播放/暂停）
+      pswp.on('keydown', (e) => {
+        if (e.originalEvent.key === ' ' || e.originalEvent.code === 'Space') {
+          e.originalEvent.preventDefault();
+          toggleSlideshow(pswp);
+        }
+      });
+
+      // PhotoSwipe 关闭时清理
+      pswp.on('close', () => {
+        stopSlideshow(pswp);
+      });
     });
 
     lightbox.init();
@@ -305,6 +417,11 @@ const HomePage = () => {
     window.currentLightbox = lightbox; // 保持对window的引用
 
     return () => {
+      // 清理幻灯片定时器
+      if (slideshowState.interval) {
+        clearInterval(slideshowState.interval);
+      }
+      
       if (lightboxRef.current) {
         lightboxRef.current.destroy();
         lightboxRef.current = null;
