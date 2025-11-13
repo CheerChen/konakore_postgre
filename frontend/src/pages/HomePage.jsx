@@ -40,17 +40,17 @@ const HomePage = () => {
     isLoading: tagsLoading
   } = useTag();
 
-  // 初始化TagManager用户偏好数据
+  // 初始化 TagManager 加载liked posts数据（用于TF-IDF排序）
   useEffect(() => {
-    const initializeUserPreferences = async () => {
+    const initializeLikedPosts = async () => {
       try {
-        await tagManager.fetchUserPreferences();
+        await tagManager.fetchLikedPosts();
       } catch (error) {
-        console.warn('Failed to fetch user preferences:', error);
+        console.warn('Failed to fetch liked posts:', error);
       }
     };
 
-    initializeUserPreferences();
+    initializeLikedPosts();
   }, []); // 只在组件挂载时执行一次
 
   // 当页面或筛选条件变化时，获取并缓存tag信息
@@ -176,8 +176,8 @@ const HomePage = () => {
     let sortedPosts;
     
     if (sortOption === 'relevance') {
-      // 相关度排序：使用TagManager（已经包含置底标签后置逻辑）
-      sortedPosts = tagManager.sortPostsByRelevance(postsWithUpdatedLikes, 'desc');
+      // TF-IDF混合排序：使用新的TF-IDF算法
+      sortedPosts = tagManager.sortPostsByTfIdfHybrid(postsWithUpdatedLikes, 'desc', totalPosts);
     } else {
       // 其他排序方式：使用通用置底标签后置排序
       sortedPosts = tagManager.sortPostsWithBottomPriorityLast(postsWithUpdatedLikes, (a, b) => {

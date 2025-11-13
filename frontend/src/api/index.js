@@ -58,3 +58,13 @@ export const getUserPreferences = async () => {
   const response = await apiClient.get('/v1/users/me/preferences');
   return response.data;
 };
+
+export const getLikedPosts = async (page = 1, limit = 3000, fields = 'tags,score,rating') => {
+  const params = new URLSearchParams({ 
+    page: page.toString(), 
+    limit: limit.toString(),
+    fields: fields
+  });
+  const response = await apiClient.get(`/v1/users/me/liked-posts?${params}`);
+  return response.data;
+};
