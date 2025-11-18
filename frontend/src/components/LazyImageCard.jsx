@@ -1,7 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { Card, CardMedia, IconButton, Box, Skeleton, Fade, Grow, Snackbar, Alert } from '@mui/material';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Card, CardMedia, IconButton, Box, Skeleton, Fade, Grow, Snackbar, Alert, CircularProgress } from '@mui/material';
 import FavoriteBorderIcon from '@mui/icons-material/FavoriteBorder';
 import FavoriteIcon from '@mui/icons-material/Favorite';
+import CloudOffIcon from '@mui/icons-material/CloudOff';
+import ImageNotSupportedIcon from '@mui/icons-material/ImageNotSupported';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useInView } from 'react-intersection-observer';
 import { toggleLike } from '../api';
@@ -15,15 +18,22 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange }) => {
   const [shouldLoadImage, setShouldLoadImage] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
   const [isRetrying, setIsRetrying] = useState(false);
+  const [sourceUnavailable, setSourceUnavailable] = useState(false);
+  const retryCountRef = useRef(0);
   const queryClient = useQueryClient();
 
   const maxRetries = 2; // 最大重试次数
 
-  // 处理图片 URL
-  const getImageUrl = (url) => {
-    if (!url) return 'https://via.placeholder.com/300';
-    
-    return url.replace('konachan.com', 'konachan.net');
+  const resetRetryState = useCallback(() => {
+    retryCountRef.current = 0;
+    setRetryCount(0);
+    setSourceUnavailable(false);
+  }, [setRetryCount, setSourceUnavailable]);
+
+  const incrementRetryCount = () => {
+    retryCountRef.current += 1;
+    setRetryCount(retryCountRef.current);
+    return retryCountRef.current;
   };
 
   // 懒加载监听
@@ -50,12 +60,47 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange }) => {
     };
   }, [inView, shouldLoadImage]);
 
-  // 重试加载图片的函数
-  const retryLoadImage = async () => {
-    if (retryCount >= maxRetries) {
-      console.warn(`Max retries reached for image: ${post.id}`);
+  useEffect(() => {
+    resetRetryState();
+    setImageLoaded(false);
+    setImageError(false);
+    setIsRetrying(false);
+  }, [post.id, resetRetryState]);
+
+  useEffect(() => {
+    if (!sourceUnavailable) {
       return;
     }
+
+    const checkCooldown = () => {
+      if (!imageRetryHelper.isInCooldown()) {
+        resetRetryState();
+      }
+    };
+
+    checkCooldown();
+    const intervalId = setInterval(checkCooldown, 1000);
+    return () => clearInterval(intervalId);
+  }, [sourceUnavailable, resetRetryState]);
+
+  // 重试加载图片的函数
+  const retryLoadImage = async () => {
+    if (isRetrying) return;
+
+    if (sourceUnavailable) {
+      if (imageRetryHelper.isInCooldown()) {
+        return;
+      }
+      setSourceUnavailable(false);
+    }
+
+    if (retryCountRef.current >= maxRetries) {
+      console.warn(`Max retries reached for image: ${post.id}`);
+      setImageError(true);
+      return;
+    }
+
+    const nextRetryCount = incrementRetryCount();
 
     setIsRetrying(true);
     setImageError(false);
@@ -87,7 +132,6 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange }) => {
         });
       }, 1); // 只重试1次，因为组件本身会管理重试次数
 
-      setRetryCount(prev => prev + 1);
       setShouldLoadImage(false);
       setTimeout(() => {
         setShouldLoadImage(true);
@@ -95,25 +139,40 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange }) => {
       }, 100);
     } catch (error) {
       console.error('Image retry failed:', error);
-      if (retryCount >= maxRetries) {
+      if (error.code === 'IMAGE_SOURCE_COOLDOWN') {
+        setSourceUnavailable(true);
+        setImageError(true);
+      } else if (nextRetryCount >= maxRetries) {
         setImageError(true);
       }
       setIsRetrying(false);
     }
   };
 
+  const handleImageLoad = () => {
+    setImageLoaded(true);
+    setImageError(false);
+    setIsRetrying(false);
+    resetRetryState();
+  };
+
   // 处理图片加载错误
   const handleImageError = () => {
-    console.warn(`Image load failed for post ${post.id}, retry count: ${retryCount}`);
+    console.warn(`Image load failed for post ${post.id}, retry count: ${retryCountRef.current}`);
     
-    if (retryCount < maxRetries) {
-      // 自动重试
-      retryLoadImage();
-    } else {
-      // 达到最大重试次数，标记为错误
+    if (sourceUnavailable) {
       setImageError(true);
       setIsRetrying(false);
+      return;
     }
+
+    if (retryCountRef.current >= maxRetries) {
+      setImageError(true);
+      setIsRetrying(false);
+      return;
+    }
+    
+    retryLoadImage();
   };
 
   const mutation = useMutation({
@@ -191,7 +250,7 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange }) => {
                 image={imageUrl}
                 alt="image"
                 onClick={() => onImageClick(index)}
-                onLoad={() => setImageLoaded(true)}
+                onLoad={handleImageLoad}
                 onError={handleImageError}
                 sx={{
                   display: imageLoaded ? 'block' : 'none',
@@ -220,19 +279,34 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange }) => {
                   justifyContent: 'center',
                   backgroundColor: 'grey.200',
                   color: 'grey.500',
-                  cursor: 'pointer'
+                  cursor: sourceUnavailable ? 'default' : 'pointer',
+                  textAlign: 'center',
+                  px: 2,
+                  gap: 1
                 }}
                 onClick={() => {
+                  if (sourceUnavailable) return;
                   if (retryCount < maxRetries) {
                     retryLoadImage();
                   }
                 }}
               >
-                <div>图片加载失败</div>
-                {retryCount < maxRetries && (
-                  <div style={{ fontSize: '12px', marginTop: '4px' }}>
-                    点击重试 ({retryCount}/{maxRetries})
-                  </div>
+                {sourceUnavailable ? (
+                  <>
+                    <CloudOffIcon sx={{ fontSize: 52, color: 'grey.500' }} />
+                    <CircularProgress
+                      size={28}
+                      thickness={4}
+                      sx={{ color: 'grey.400' }}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <ImageNotSupportedIcon sx={{ fontSize: 52, color: 'grey.500' }} />
+                    {retryCount < maxRetries && (
+                      <RefreshIcon sx={{ fontSize: 28, color: 'grey.400' }} />
+                    )}
+                  </>
                 )}
               </Box>
             </Grow>
