@@ -5,92 +5,12 @@
  */
 export const getImageUrl = (url) => {
   if (!url) return 'https://via.placeholder.com/300';
-  
+
   const konachanUrl = url.replace('konachan.com', 'konachan.net');
   return konachanUrl.replace('https://konachan.net', '/konachan-proxy');
 };
 
-/**
- * 图片重试工具类
- */
-class ImageRetryHelper {
-  constructor() {
-    this.retryDelays = [1000, 2000, 3000]; // 重试延迟：1秒、2秒、3秒
-    this.maxConsecutiveFailuresBeforeCooldown = 25; // 连续失败次数触发熔断
-    this.cooldownDuration = 30 * 1000; // 熔断持续时间：30秒
-    this.consecutiveFailures = 0;
-    this.cooldownUntil = 0;
-  }
 
-  // 延迟执行
-  delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
-
-  // 检查是否处于熔断状态
-  isInCooldown() {
-    return Date.now() < this.cooldownUntil;
-  }
-
-  getCooldownRemainingMs() {
-    return Math.max(this.cooldownUntil - Date.now(), 0);
-  }
-
-  resetFailureState() {
-    this.consecutiveFailures = 0;
-    this.cooldownUntil = 0;
-  }
-
-  registerFailure() {
-    this.consecutiveFailures += 1;
-    if (this.consecutiveFailures >= this.maxConsecutiveFailuresBeforeCooldown) {
-      this.cooldownUntil = Date.now() + this.cooldownDuration;
-    }
-  }
-
-  createCooldownError(originalError) {
-    const error = new Error('Image source temporarily unavailable');
-    error.code = 'IMAGE_SOURCE_COOLDOWN';
-    error.cooldownUntil = this.cooldownUntil;
-    error.cooldownMs = this.getCooldownRemainingMs();
-    error.originalError = originalError;
-    return error;
-  }
-
-  // 带重试的异步执行
-  async withRetry(asyncFn, maxRetries = 3) {
-    if (this.isInCooldown()) {
-      throw this.createCooldownError();
-    }
-
-    let lastError;
-
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        const result = await asyncFn();
-        this.resetFailureState();
-        return result;
-      } catch (error) {
-        lastError = error;
-        this.registerFailure();
-
-        if (this.isInCooldown()) {
-          throw this.createCooldownError(error);
-        }
-
-        if (attempt < maxRetries) {
-          const delayMs = this.retryDelays[attempt] || 3000;
-          console.warn(`Attempt ${attempt + 1} failed, retrying in ${delayMs}ms:`, error.message);
-          await this.delay(delayMs);
-        }
-      }
-    }
-    throw lastError;
-  }
-}
-
-// 创建全局实例
-export const imageRetryHelper = new ImageRetryHelper();
 
 /**
  * 检查图片是否为 waifu pillow 格式（宽高比 > 2）
@@ -121,9 +41,9 @@ export const getAspectRatio = (width, height) => {
  */
 export const getImageDimensionsText = (rawData) => {
   if (!rawData) return 'N/A';
-  
+
   const { width, height, jpeg_width, jpeg_height, jpeg_file_size } = rawData;
-  
+
   if (jpeg_file_size === 0) {
     return `${width}x${height}`;
   } else {
