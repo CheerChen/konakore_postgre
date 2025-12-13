@@ -54,22 +54,22 @@ const SearchBar = ({ onSearch, searchQuery, onClearSearch, totalPosts, available
             // 无输入时显示前15个，优先显示常用的
             return options.slice(0, 15);
           }
-          
+
           // 有输入时进行模糊匹配
-          const filtered = options.filter(option => 
+          const filtered = options.filter(option =>
             option.toLowerCase().includes(inputValue.toLowerCase())
           );
-          
+
           // 排序：以输入开头的优先，然后是包含输入的
           const sorted = filtered.sort((a, b) => {
             const aStarts = a.toLowerCase().startsWith(inputValue.toLowerCase());
             const bStarts = b.toLowerCase().startsWith(inputValue.toLowerCase());
-            
+
             if (aStarts && !bStarts) return -1;
             if (!aStarts && bStarts) return 1;
             return a.localeCompare(b);
           });
-          
+
           return sorted.slice(0, 25);
         }}
         renderTags={(tagValue, getTagProps) =>
