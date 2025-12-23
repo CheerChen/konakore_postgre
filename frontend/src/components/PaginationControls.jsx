@@ -1,12 +1,12 @@
-import React from 'react';
-import { Box, Pagination, Typography, Select, MenuItem, FormControl, InputLabel, FormControlLabel, Switch } from '@mui/material';
+import React, { useState } from 'react';
+import { Box, Pagination, Typography, Select, MenuItem, FormControl, InputLabel, FormControlLabel, Switch, TextField, Button, Stack } from '@mui/material';
 
-const PaginationControls = ({ 
-  currentPage, 
-  totalPages, 
-  onPageChange, 
-  perPage, 
-  onPerPageChange, 
+const PaginationControls = ({
+  currentPage,
+  totalPages,
+  onPageChange,
+  perPage,
+  onPerPageChange,
   totalItems,
   isLoading = false,
   sortOption,
@@ -14,31 +14,132 @@ const PaginationControls = ({
   showLikedOnly = false,
   onLikedFilterChange,
   showLikedArtistsOnly = false,
-  onLikedArtistsFilterChange
+  onLikedArtistsFilterChange,
+  currentPageLikedCount = 0
 }) => {
+  const [jumpToPage, setJumpToPage] = useState('');
+
   // 总是显示控件，即使只有一页（因为有排序和liked过滤功能）
   const showPagination = totalPages > 1;
 
+  const handleJumpToPage = () => {
+    const pageNumber = parseInt(jumpToPage, 10);
+    if (pageNumber >= 1 && pageNumber <= totalPages) {
+      onPageChange(pageNumber);
+      setJumpToPage('');
+    }
+  };
+
+  const handleInputKeyPress = (event) => {
+    if (event.key === 'Enter') {
+      handleJumpToPage();
+    }
+  };
+
+  const handleInputChange = (event) => {
+    const value = event.target.value;
+    if (value === '' || /^\d+$/.test(value)) {
+      setJumpToPage(value);
+    }
+  };
+
   return (
-    <Box 
-      sx={{ 
-        display: 'flex', 
-        flexDirection: { xs: 'column', sm: 'row' },
-        justifyContent: 'space-between', 
-        alignItems: 'center', 
-        mt: 4, 
+    <Box
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        mt: 4,
         mb: 2,
         gap: 2
       }}
     >
-      {/* 分页信息 */}
-      <Typography variant="body2" color="text.secondary">
-        显示第 {((currentPage - 1) * perPage) + 1} - {Math.min(currentPage * perPage, totalItems)} 项，
-        共 {totalItems} 项
-      </Typography>
+      {/* 第一行：页面导航 */}
+      <Box
+        sx={{
+          display: 'flex',
+          flexDirection: 'row',
+          flexWrap: 'wrap',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: 2
+        }}
+      >
+        {/* 分页信息 */}
+        <Typography variant="body2" color="text.secondary">
+          显示第 {((currentPage - 1) * perPage) + 1} - {Math.min(currentPage * perPage, totalItems)} 项，
+          共 {totalItems} 项
+        </Typography>
 
-      {/* 分页控件 */}
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+        {/* 右侧导航控件组 */}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+          {/* 分页按钮 - 只在多页时显示 */}
+          {showPagination && (
+            <Pagination
+              count={totalPages}
+              page={currentPage}
+              onChange={(event, value) => onPageChange(value)}
+              disabled={isLoading}
+              color="primary"
+              showFirstButton
+              showLastButton
+              siblingCount={1}
+              boundaryCount={1}
+            />
+          )}
+
+          {/* 跳转到指定页面 */}
+          {showPagination && (
+            <Stack direction="row" spacing={1} alignItems="center">
+              <Typography variant="body2" color="text.secondary">
+                跳转到
+              </Typography>
+              <TextField
+                size="small"
+                value={jumpToPage}
+                onChange={handleInputChange}
+                onKeyPress={handleInputKeyPress}
+                placeholder="页码"
+                disabled={isLoading}
+                sx={{
+                  width: '70px',
+                  '& .MuiOutlinedInput-root': {
+                    height: '32px'
+                  }
+                }}
+                inputProps={{
+                  min: 1,
+                  max: totalPages,
+                  style: { textAlign: 'center' }
+                }}
+              />
+              <Typography variant="body2" color="text.secondary">
+                页
+              </Typography>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={handleJumpToPage}
+                disabled={isLoading || !jumpToPage || parseInt(jumpToPage, 10) < 1 || parseInt(jumpToPage, 10) > totalPages}
+                sx={{ minWidth: '50px', height: '32px' }}
+              >
+                跳转
+              </Button>
+            </Stack>
+          )}
+        </Box>
+      </Box>
+
+      {/* 第二行：筛选和排序 */}
+      <Box
+        sx={{
+          display: 'flex',
+          flexDirection: { xs: 'column', sm: 'row' },
+          alignItems: { xs: 'flex-start', sm: 'center' },
+          justifyContent: 'flex-end',
+          gap: 2,
+          flexWrap: 'wrap'
+        }}
+      >
         {/* 每页条数选择 */}
         <FormControl size="small" sx={{ minWidth: 120 }}>
           <InputLabel>每页显示</InputLabel>
@@ -95,9 +196,9 @@ const PaginationControls = ({
                 size="small"
               />
             }
-            label="仅收藏"
-            sx={{ 
-              ml: 1,
+            label={`仅收藏${currentPageLikedCount > 0 ? ` (${currentPageLikedCount})` : ''}`}
+            sx={{
+              m: 0,
               '& .MuiFormControlLabel-label': {
                 fontSize: '0.875rem',
                 color: showLikedOnly ? 'primary.main' : 'text.secondary'
@@ -126,28 +227,13 @@ const PaginationControls = ({
               />
             }
             label="仅收藏画师"
-            sx={{ 
-              ml: 1,
+            sx={{
+              m: 0,
               '& .MuiFormControlLabel-label': {
                 fontSize: '0.875rem',
                 color: showLikedArtistsOnly ? 'secondary.main' : 'text.secondary'
               }
             }}
-          />
-        )}
-
-        {/* 分页按钮 - 只在多页时显示 */}
-        {showPagination && (
-          <Pagination
-            count={totalPages}
-            page={currentPage}
-            onChange={(event, value) => onPageChange(value)}
-            disabled={isLoading}
-            color="primary"
-            showFirstButton
-            showLastButton
-            siblingCount={1}
-            boundaryCount={1}
           />
         )}
       </Box>
