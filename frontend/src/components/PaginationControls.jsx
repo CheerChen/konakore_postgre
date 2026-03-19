@@ -12,7 +12,9 @@ const PaginationControls = ({
   sortOption,
   onSortChange,
   showLikedOnly = false,
-  onLikedFilterChange
+  onLikedFilterChange,
+  showLikedArtistsOnly = false,
+  onLikedArtistsFilterChange
 }) => {
   // 总是显示控件，即使只有一页（因为有排序和liked过滤功能）
   const showPagination = totalPages > 1;
@@ -80,7 +82,14 @@ const PaginationControls = ({
             control={
               <Switch
                 checked={showLikedOnly}
-                onChange={(e) => onLikedFilterChange(e.target.checked)}
+                onChange={(e) => {
+                  const newValue = e.target.checked;
+                  onLikedFilterChange(newValue);
+                  // 如果打开"仅收藏"，则关闭"仅收藏画师"
+                  if (newValue && showLikedArtistsOnly && onLikedArtistsFilterChange) {
+                    onLikedArtistsFilterChange(false);
+                  }
+                }}
                 disabled={isLoading}
                 color="primary"
                 size="small"
@@ -92,6 +101,36 @@ const PaginationControls = ({
               '& .MuiFormControlLabel-label': {
                 fontSize: '0.875rem',
                 color: showLikedOnly ? 'primary.main' : 'text.secondary'
+              }
+            }}
+          />
+        )}
+
+        {/* 仅收藏画师过滤开关 */}
+        {onLikedArtistsFilterChange && (
+          <FormControlLabel
+            control={
+              <Switch
+                checked={showLikedArtistsOnly}
+                onChange={(e) => {
+                  const newValue = e.target.checked;
+                  onLikedArtistsFilterChange(newValue);
+                  // 如果打开"仅收藏画师"，则关闭"仅收藏"
+                  if (newValue && showLikedOnly && onLikedFilterChange) {
+                    onLikedFilterChange(false);
+                  }
+                }}
+                disabled={isLoading}
+                color="secondary"
+                size="small"
+              />
+            }
+            label="仅收藏画师"
+            sx={{ 
+              ml: 1,
+              '& .MuiFormControlLabel-label': {
+                fontSize: '0.875rem',
+                color: showLikedArtistsOnly ? 'secondary.main' : 'text.secondary'
               }
             }}
           />

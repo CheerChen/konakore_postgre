@@ -24,6 +24,7 @@ const HomePage = () => {
   const [perPage, setPerPage] = useState(100);
   const [sortOption, setSortOption] = useState('id'); // 默认按ID降序
   const [showLikedOnly, setShowLikedOnly] = useState(false);
+  const [showLikedArtistsOnly, setShowLikedArtistsOnly] = useState(false);
   const [postsLikeState, setPostsLikeState] = useState({}); // 本地收藏状态缓存
   const lightboxRef = useRef(null); // 用于存储PhotoSwipe实例
   
@@ -57,7 +58,9 @@ const HomePage = () => {
   useEffect(() => {
     const fetchTagInfoData = async () => {
       try {
-        await fetchTagInfo(currentPage, perPage, showLikedOnly ? true : null);
+        // 根据过滤条件确定liked参数
+        const likedParam = showLikedOnly ? true : (showLikedArtistsOnly ? true : null);
+        await fetchTagInfo(currentPage, perPage, likedParam);
       } catch (error) {
         console.warn('Failed to fetch tag info:', error);
       }
@@ -66,7 +69,7 @@ const HomePage = () => {
     // 延迟执行以避免过于频繁的API调用
     const timeoutId = setTimeout(fetchTagInfoData, 300);
     return () => clearTimeout(timeoutId);
-  }, [currentPage, perPage, showLikedOnly, fetchTagInfo]);
+  }, [currentPage, perPage, showLikedOnly, showLikedArtistsOnly, fetchTagInfo]);
 
   // 处理来自LazyImageCard的收藏状态变化
   const handleLikeChange = (postId, isLiked) => {
@@ -78,8 +81,8 @@ const HomePage = () => {
 
   // --- DATA FETCHING ---
   const postsQuery = useQuery({
-    queryKey: ['posts', currentPage, perPage, showLikedOnly],
-    queryFn: () => getPosts(currentPage, perPage, showLikedOnly ? true : null),
+    queryKey: ['posts', currentPage, perPage, showLikedOnly, showLikedArtistsOnly],
+    queryFn: () => getPosts(currentPage, perPage, showLikedOnly ? true : null, showLikedArtistsOnly ? true : null),
     enabled: !searchQuery,
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
@@ -95,6 +98,11 @@ const HomePage = () => {
     setSearchQuery(query);
     setCurrentPage(1); // 重置到第一页
     setSortOption('id'); // 搜索时重置排序为id desc
+    
+    // 如果搜索标签，自动关闭"仅收藏画师"开关
+    if (query && showLikedArtistsOnly) {
+      setShowLikedArtistsOnly(false);
+    }
   };
   
   const clearSearch = () => {
@@ -106,6 +114,11 @@ const HomePage = () => {
     setSearchQuery(tag);
     setCurrentPage(1); // 重置到第一页
     setSortOption('id'); // 搜索时重置排序为id desc
+    
+    // 点击标签搜索时，自动关闭"仅收藏画师"开关
+    if (showLikedArtistsOnly) {
+      setShowLikedArtistsOnly(false);
+    }
   };
 
   const handlePageChange = (page) => {
@@ -125,6 +138,20 @@ const HomePage = () => {
 
   const handleLikedFilterChange = (newShowLikedOnly) => {
     setShowLikedOnly(newShowLikedOnly);
+    // 如果打开"仅收藏"，则关闭"仅收藏画师"
+    if (newShowLikedOnly && showLikedArtistsOnly) {
+      setShowLikedArtistsOnly(false);
+    }
+    setCurrentPage(1); // 重置到第一页
+    // 保持当前搜索和排序选项不变，实现联动
+  };
+
+  const handleLikedArtistsFilterChange = (newShowLikedArtistsOnly) => {
+    setShowLikedArtistsOnly(newShowLikedArtistsOnly);
+    // 如果打开"仅收藏画师"，则关闭"仅收藏"
+    if (newShowLikedArtistsOnly && showLikedOnly) {
+      setShowLikedOnly(false);
+    }
     setCurrentPage(1); // 重置到第一页
     // 保持当前搜索和排序选项不变，实现联动
   };
@@ -464,6 +491,8 @@ const HomePage = () => {
           onSortChange={handleSortChange}
           showLikedOnly={showLikedOnly}
           onLikedFilterChange={handleLikedFilterChange}
+          showLikedArtistsOnly={showLikedArtistsOnly}
+          onLikedArtistsFilterChange={handleLikedArtistsFilterChange}
         />
         {isLoading ? (
           <Box sx={{ 
