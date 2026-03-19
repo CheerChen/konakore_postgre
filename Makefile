@@ -33,7 +33,14 @@ LOCAL_POSTGRES_IMAGE := $(PROJECT_NAME)_$(POSTGRES_SERVICE_NAME)
 
 
 # --- Local Development ---
-.PHONY: build up down restart logs logs-api logs-scheduler logs-file-sync logs-frontend build-frontend dev-frontend
+.PHONY: build up down restart logs logs-api logs-scheduler logs-file-sync logs-frontend build-frontend dev-frontend uv-lock
+
+# Generate uv.lock files for all Python services (run this before building)
+uv-lock:
+	@echo "--> Generating uv.lock files for Python services..."
+	cd api && uv lock
+	cd file_sync && uv lock
+	cd scheduler && uv lock
 
 # Build the custom docker images for api, scheduler, file_sync, and frontend
 build:
@@ -123,6 +130,7 @@ help:
 	@echo "Usage: make [target]"
 	@echo ""
 	@echo "Local Development:"
+	@echo "  uv-lock        Generate uv.lock files for all Python services"
 	@echo "  build          Build Docker images for api, scheduler, file_sync, and frontend"
 	@echo "  build-frontend Build only the frontend Docker image"
 	@echo "  dev-frontend   Start frontend in development mode (outside Docker)"
