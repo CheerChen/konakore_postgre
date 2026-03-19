@@ -1,4 +1,4 @@
-import { getTags, getUserPreferences } from '../api';
+import { getTags, getLikedPosts } from '../api';
 
 // Tag类型常量定义
 export const TAG_TYPES = {
@@ -9,24 +9,27 @@ export const TAG_TYPES = {
   COMPANY: 6
 };
 
-// 相关度排序的权重配置
-export const RELEVANCE_WEIGHTS = {
-  ARTIST: 10.0,     // 画师 - 最重要，决定风格偏好 (提高权重)
-  COPYRIGHT: 5.0,   // 版权 - 作品系列偏好 (提高权重)
-  CHARACTER: 3.0,   // 角色 - 角色偏好 (提高权重)
-  GENERAL: 0.2,     // 通用 - 基础属性，大幅降低权重避免刷分
-  COMPANY: 2.0,     // 公司 - 提高权重
-  OTHER: 1.0        // 其他类型
+// TF-IDF混合排序的权重配置
+export const TFIDF_HYBRID_CONFIG = {
+  profileWeight: 0.8,    // TF-IDF分数权重
+  qualityWeight: 0.15,   // 质量分数权重 
+  curationWeight: 0.05,  // 策展分数权重
+  curationMap: {
+    's': 1.0,  // Safe
+    'q': 0.9,  // Questionable  
+    'e': 0.7   // Explicit
+  },
+  typeWeights: {
+    [TAG_TYPES.GENERAL]: 0.4,   // General
+    [TAG_TYPES.ARTIST]: 3.0,    // Artist
+    [TAG_TYPES.COPYRIGHT]: 2.5, // Copyright/series
+    [TAG_TYPES.CHARACTER]: 2.0, // Character
+    5: 0.1,                     // Meta (type 5)
+    [TAG_TYPES.COMPANY]: 2.0    // Brand/studio
+  }
 };
 
-// GENERAL标签的限制配置
-export const GENERAL_LIMITS = {
-  MIN_LIKED_COUNT: 50,    // 只考虑被收藏50次以上的GENERAL标签
-  MAX_CONTRIBUTION: 0.3,  // GENERAL标签最多贡献总分的30%
-  MAX_TAGS: 10           // 每个post最多计算10个GENERAL标签
-};
-
-// TAGME标签列表 - 这些标签在计算相关度时会被完全忽略
+// TAGME标签列表 - 这些标签在计算时会被完全忽略
 export const TAGME_EXCLUDE_TAGS = [
   'tagme',                     // 通用tagme标签
   'tagme_(artist)',            // 画师未知标签
@@ -109,9 +112,10 @@ class TagManager {
       tagInfo: new Map(),                 // 原 globalTagInfoCache  
       translations: null,                 // 原 globalTagTranslations
       translationObserver: null,          // MutationObserver实例
-      userPreferences: null,              // 用户偏好数据
-      preferencesLastFetch: null,         // 上次获取偏好数据的时间
-      isFetchingPreferences: false,       // 防止重复请求用户偏好
+      likedPosts: null,                   // 用户收藏的posts数据（用于TF-IDF）
+      likedPostsLastFetch: null,          // 上次获取liked posts的时间
+      preferencesLastFetch: null,         // 上次获取偏好数据的时间（已废弃，保留兼容）
+      isFetchingLikedPosts: false,        // 防止重复请求liked posts
       isFetchingTranslations: false,      // 防止重复请求翻译文件
     };
     
@@ -274,14 +278,14 @@ class TagManager {
   // ===== 用户偏好管理 =====
 
   /**
-   * 获取用户偏好数据
+   * 获取用户收藏的posts数据（用于TF-IDF学习）
    * @param {boolean} forceRefresh - 是否强制刷新数据
    */
-  async fetchUserPreferences(forceRefresh = false) {
+  async fetchLikedPosts(forceRefresh = false) {
     // 如果正在请求，则直接返回，避免重复
-    if (this.state.isFetchingPreferences) {
-      console.warn('Fetch user preferences already in progress.');
-      return this.state.userPreferences;
+    if (this.state.isFetchingLikedPosts) {
+      console.warn('Fetch liked posts already in progress.');
+      return this.state.likedPosts;
     }
 
     try {
@@ -290,164 +294,133 @@ class TagManager {
       const cacheTime = 30 * 60 * 1000; // 30分钟
       
       if (!forceRefresh && 
-          this.state.userPreferences && 
-          this.state.preferencesLastFetch && 
-          (now - this.state.preferencesLastFetch) < cacheTime) {
-        return this.state.userPreferences;
+          this.state.likedPosts && 
+          this.state.likedPostsLastFetch && 
+          (now - this.state.likedPostsLastFetch) < cacheTime) {
+        return this.state.likedPosts;
       }
 
-      this.state.isFetchingPreferences = true; // 设置状态锁
+      this.state.isFetchingLikedPosts = true; // 设置状态锁
 
-      const preferences = await getUserPreferences();
+      const response = await getLikedPosts(1, 3000, 'tags,score,rating');
       
-      this.state.userPreferences = preferences;
-      this.state.preferencesLastFetch = now;
+      this.state.likedPosts = response.posts;
+      this.state.likedPostsLastFetch = now;
       
       this.notify({ 
-        type: 'user-preferences-updated', 
-        data: preferences 
+        type: 'liked-posts-updated', 
+        data: { 
+          count: response.posts.length,
+          total: response.pagination.total_items
+        } 
       });
       
-      return preferences;
+      console.log(`✅ Loaded ${response.posts.length} liked posts for TF-IDF learning`);
+      
+      return this.state.likedPosts;
     } catch (error) {
-      console.warn('Failed to fetch user preferences:', error);
+      console.warn('Failed to fetch liked posts:', error);
       return null;
     } finally {
-      this.state.isFetchingPreferences = false; // 释放状态锁
+      this.state.isFetchingLikedPosts = false; // 释放状态锁
     }
   }
 
   /**
-   * 计算单个post的相关度分数
-   * @param {Object} post - post对象
-   * @returns {number} 相关度分数
+   * 学习用户偏好，构建TF-IDF模型
+   * @param {Array} likedPosts - 用户喜欢的posts（来自API）
+   * @param {number} totalPosts - 总post数量（默认40万）
+   * @returns {Map} TF-IDF权重映射
    */
-  calculatePostRelevanceScore(post) {
-    if (!this.state.userPreferences?.preferences_by_type) {
-      return 0;
-    }
+  learnTfIdf(likedPosts, totalPosts = 400000) {
+    if (!likedPosts?.length) return new Map();
 
-    const preferences = this.state.userPreferences.preferences_by_type;
-    
-    // 从post中提取tags
-    let postTags = [];
-    if (post.data?.tags && typeof post.data.tags === 'string') {
-      postTags = post.data.tags.split(' ').filter(Boolean);
-    }
-
-    // 分别计算不同类型标签的分数
-    let artistScore = 0;
-    let copyrightScore = 0;
-    let characterScore = 0;
-    let generalScore = 0;
-    let companyScore = 0;
-    let otherScore = 0;
-
-    // 收集GENERAL标签用于后续限制
-    const generalMatches = [];
-
-    // 为每个tag计算分数
-    postTags.forEach(tagName => {
-      // 排除tagme类型标签
-      if (isTagmeTag(tagName)) {
-        return; // tagme标签不参与分数计算
+    // 提取所有liked posts的tags
+    const likedTags = [];
+    likedPosts.forEach(post => {
+      // 适配新API返回的数据格式：{id, tags, score, rating}
+      if (post.tags && typeof post.tags === 'string') {
+        likedTags.push(post.tags);
       }
+      // 兼容旧的模拟数据格式：{data: {tags}}
+      else if (post.data?.tags && typeof post.data.tags === 'string') {
+        likedTags.push(post.data.tags);
+      }
+    });
 
-      // 获取tag信息
-      const tagInfo = this.state.tagInfo.get(tagName);
+    // 计算TF (词频)
+    const tf1 = new Map(); // tag出现次数
+    const tf2 = new Map(); // tag总词频
+
+    likedTags.forEach(tagsString => {
+      const tags = tagsString.split(' ').filter(Boolean);
+      tags.forEach(tag => {
+        tf1.set(tag, (tf1.get(tag) || 0) + 1);
+        tf2.set(tag, (tf2.get(tag) || 0) + tags.length);
+      });
+    });
+
+    // 构建TF-IDF映射
+    const tfIdfMap = new Map();
+    
+    tf1.forEach((count, tag) => {
+      const tagInfo = this.state.tagInfo.get(tag);
       if (!tagInfo) return;
 
-      const tagType = tagInfo.type;
-      let typeName = 'OTHER';
-      let weight = RELEVANCE_WEIGHTS.OTHER;
+      const tagCount = tagInfo.count || 1;
+      const tagType = tagInfo.type || 0;
+      
+      // 计算TF-IDF
+      const tf = tf1.get(tag) / tf2.get(tag);
+      const idf = Math.log(totalPosts / (tagCount + 1));
+      const typeWeight = TFIDF_HYBRID_CONFIG.typeWeights[tagType] || 1.0;
+      
+      const tfIdfScore = tf * idf * typeWeight;
+      tfIdfMap.set(tag, tfIdfScore);
+    });
 
-      // 确定tag类型和权重
-      switch (tagType) {
-        case TAG_TYPES.GENERAL:
-          typeName = 'GENERAL';
-          weight = RELEVANCE_WEIGHTS.GENERAL;
-          break;
-        case TAG_TYPES.ARTIST:
-          typeName = 'ARTIST';
-          weight = RELEVANCE_WEIGHTS.ARTIST;
-          break;
-        case TAG_TYPES.COPYRIGHT:
-          typeName = 'COPYRIGHT';
-          weight = RELEVANCE_WEIGHTS.COPYRIGHT;
-          break;
-        case TAG_TYPES.CHARACTER:
-          typeName = 'CHARACTER';
-          weight = RELEVANCE_WEIGHTS.CHARACTER;
-          break;
-        case TAG_TYPES.COMPANY:
-          typeName = 'COMPANY';
-          weight = RELEVANCE_WEIGHTS.COMPANY;
-          break;
-      }
+    return tfIdfMap;
+  }
 
-      // 查找用户对该tag的偏好
-      const typePreferences = preferences[typeName];
-      if (typePreferences) {
-        const tagPreference = typePreferences.find(pref => pref.name === tagName);
-        if (tagPreference) {
-          // 计算分数：用户喜欢次数 * 类型权重 * 偏好比率加成
-          const baseScore = tagPreference.liked_count * weight;
-          const preferenceBonus = tagPreference.preference_ratio / 100; // 转换为小数
-          const finalScore = baseScore * (1 + preferenceBonus);
+  /**
+   * 计算单个post的TF-IDF混合分数
+   * @param {Object} post - post对象
+   * @param {Map} tfIdfWeights - TF-IDF权重映射
+   * @returns {Object} 包含各项分数的对象
+   */
+  calculateTfIdfHybridScore(post, tfIdfWeights) {
+    const scores = {
+      profile: 0,
+      quality: 0, 
+      curation: 0,
+      final: 0
+    };
 
-          // 根据类型累加到对应分数
-          switch (tagType) {
-            case TAG_TYPES.ARTIST:
-              artistScore += finalScore;
-              break;
-            case TAG_TYPES.COPYRIGHT:
-              copyrightScore += finalScore;
-              break;
-            case TAG_TYPES.CHARACTER:
-              characterScore += finalScore;
-              break;
-            case TAG_TYPES.COMPANY:
-              companyScore += finalScore;
-              break;
-            case TAG_TYPES.GENERAL:
-              // GENERAL标签需要额外限制
-              if (tagPreference.liked_count >= GENERAL_LIMITS.MIN_LIKED_COUNT) {
-                generalMatches.push({
-                  score: finalScore,
-                  tagName: tagName,
-                  likedCount: tagPreference.liked_count
-                });
-              }
-              break;
-            default:
-              otherScore += finalScore;
-              break;
+    // 1. Profile Score (TF-IDF)
+    if (post.data?.tags && typeof post.data.tags === 'string') {
+      const tags = post.data.tags.split(' ').filter(Boolean);
+      if (tags.length > 0) {
+        let totalWeight = 0;
+        tags.forEach(tag => {
+          const weight = tfIdfWeights.get(tag) || 0;
+          if (weight > 0) {
+            totalWeight += weight;
+            if (!post.alg) post.alg = {};
+            post.alg[tag] = weight;
           }
-        }
+        });
+        scores.profile = totalWeight / tags.length;
       }
-    });
+    }
 
-    // 处理GENERAL标签：按分数排序，取前N个，并限制总贡献
-    generalMatches.sort((a, b) => b.score - a.score);
-    const limitedGeneralMatches = generalMatches.slice(0, GENERAL_LIMITS.MAX_TAGS);
-    limitedGeneralMatches.forEach(match => {
-      generalScore += match.score;
-    });
+    // 2. Quality Score (log1p of score)
+    scores.quality = Math.log1p(post.data?.score || 0);
 
-    // 计算核心分数（非GENERAL）
-    const coreScore = artistScore + copyrightScore + characterScore + companyScore + otherScore;
-    
-    // 限制GENERAL分数不超过总分的指定比例
-    const maxGeneralScore = coreScore * GENERAL_LIMITS.MAX_CONTRIBUTION / (1 - GENERAL_LIMITS.MAX_CONTRIBUTION);
-    const finalGeneralScore = Math.min(generalScore, maxGeneralScore);
+    // 3. Curation Score (rating mapping)
+    const rating = post.data?.rating || 's';
+    scores.curation = TFIDF_HYBRID_CONFIG.curationMap[rating] || TFIDF_HYBRID_CONFIG.curationMap['s'];
 
-    // 计算最终分数：正分 + 限制后的GENERAL分
-    const totalScore = coreScore + finalGeneralScore;
-
-    // 确保分数不低于0
-    const finalScore = Math.max(0, totalScore);
-
-    return Math.round(finalScore * 100) / 100; // 保留两位小数
+    return scores;
   }
 
   /**
@@ -464,78 +437,95 @@ class TagManager {
   }
 
   /**
-   * 获取post中的置底优先级标签列表
-   * @param {Object} post - post对象
-   * @returns {Array} 包含的置底标签列表
-   */
-  getBottomPriorityTags(post) {
-    if (post.raw_data?.tags && typeof post.raw_data.tags === 'string') {
-      const postTags = post.raw_data.tags.split(' ').filter(Boolean);
-      return BOTTOM_PRIORITY_TAGS.filter(tag => postTags.includes(tag));
-    }
-    return [];
-  }
-
-  /**
-   * 对posts数组按相关度排序
+   * 使用TF-IDF混合算法对posts数组排序
    * @param {Array} posts - posts数组
    * @param {string} order - 排序方向 'desc' | 'asc'
+   * @param {number} totalPosts - 总数据数量
    * @returns {Array} 排序后的posts数组
    */
-  sortPostsByRelevance(posts, order = 'desc') {
+  sortPostsByTfIdfHybrid(posts, order = 'desc', totalPosts = 400000) {
     if (!posts?.length) return posts;
     
-    // 确保有用户偏好数据
-    if (!this.state.userPreferences) {
-      console.warn('No user preferences loaded for relevance sorting');
+    // 确保有liked posts数据
+    if (!this.state.likedPosts) {
+      console.warn('No liked posts loaded for TF-IDF hybrid sorting');
       return posts;
     }
 
-    // 计算每个post的相关度分数并排序
-    const postsWithScores = posts.map(post => ({
-      ...post,
-      relevanceScore: this.calculatePostRelevanceScore(post),
-      hasBottomPriority: this.hasBottomPriorityTag(post)
-    }));
+    // 获取用户收藏的posts用于学习
+    const likedPosts = this.state.likedPosts;
+    if (!likedPosts?.length) {
+      console.warn('No liked posts found for TF-IDF learning');
+      return posts;
+    }
 
-    // 排序：先按置底标签分组，再按相关度排序
+    // 学习TF-IDF模型
+    const tfIdfWeights = this.learnTfIdf(likedPosts, totalPosts);
+    
+    // 第一遍：计算原始分数并找到最大值
+    const rawScores = [];
+    let maxProfile = 0, maxQuality = 0, maxCuration = 0;
+
+    posts.forEach((post, index) => {
+      const scores = this.calculateTfIdfHybridScore(post, tfIdfWeights);
+      rawScores[index] = scores;
+      
+      maxProfile = Math.max(maxProfile, scores.profile);
+      maxQuality = Math.max(maxQuality, scores.quality);
+      maxCuration = Math.max(maxCuration, scores.curation);
+    });
+
+    // 第二遍：归一化并计算最终分数
+    const postsWithScores = posts.map((post, index) => {
+      const raw = rawScores[index];
+      
+      const normProfile = maxProfile > 0 ? raw.profile / maxProfile : 0;
+      const normQuality = maxQuality > 0 ? raw.quality / maxQuality : 0; 
+      const normCuration = maxCuration > 0 ? raw.curation / maxCuration : 0;
+      
+      const finalScore = TFIDF_HYBRID_CONFIG.profileWeight * normProfile +
+                        TFIDF_HYBRID_CONFIG.qualityWeight * normQuality +
+                        TFIDF_HYBRID_CONFIG.curationWeight * normCuration;
+      
+      // 存储详细分数用于调试
+      if (!post.alg) post.alg = {};
+      post.alg.profile_score = normProfile;
+      post.alg.quality_score = normQuality;
+      post.alg.curation_score = normCuration;
+      
+      return {
+        ...post,
+        myScore: finalScore,
+        hasBottomPriority: this.hasBottomPriorityTag(post)
+      };
+    });
+
+    // 排序：先按置底标签分组，再按最终分数排序
     postsWithScores.sort((a, b) => {
       // 优先级1: 置底标签的posts永远排在后面
       if (a.hasBottomPriority !== b.hasBottomPriority) {
         return a.hasBottomPriority - b.hasBottomPriority;
       }
       
-      // 优先级2: 在相同置底状态下，按相关度排序
+      // 优先级2: 在相同置底状态下，按最终分数排序
       if (order === 'asc') {
-        return a.relevanceScore - b.relevanceScore;
+        return a.myScore - b.myScore;
       } else {
-        return b.relevanceScore - a.relevanceScore;
+        return b.myScore - a.myScore;
       }
     });
 
-    // 调试信息：显示前5个post的分数
+    // 调试信息
     if (postsWithScores.length > 0) {
       const topPosts = postsWithScores.slice(0, 5);
-      console.log('🎯 相关度排序结果 (前5个):', topPosts.map(p => ({
+      console.log('🎯 TF-IDF混合排序结果 (前5个):', topPosts.map(p => ({
         id: p.id,
-        score: p.relevanceScore,
-        hasBottomPriority: p.hasBottomPriority,
-        bottomTags: this.getBottomPriorityTags(p),
-        sample_tags: p.data?.tags?.split(' ').slice(0, 3).join(', ')
+        myScore: p.myScore,
+        profile: p.alg?.profile_score,
+        quality: p.alg?.quality_score,
+        curation: p.alg?.curation_score,
+        hasBottomPriority: p.hasBottomPriority
       })));
-      
-      // 显示分数详细分解（仅第一个post）
-      if (topPosts.length > 0) {
-        const firstPost = topPosts[0];
-        const postTags = firstPost.data?.tags?.split(' ').filter(Boolean) || [];
-        
-        console.log('🔍 详细分数分解 (Post ' + firstPost.id + '):', {
-          totalScore: firstPost.relevanceScore,
-          hasBottomPriority: firstPost.hasBottomPriority,
-          bottomTags: this.getBottomPriorityTags(firstPost),
-          sampleTags: postTags.slice(0, 10).join(', ') || 'N/A'
-        });
-      }
     }
 
     return postsWithScores;
@@ -568,10 +558,8 @@ class TagManager {
     });
   }
 
-  // ===== 标签操作方法 =====
-
   /**
-   * 获取tag的颜色信息
+   * 检查post是否包含任何置底优先级的标签
    */
   getTagColors(tagName) {
     const tagInfo = this.state.tagInfo.get(tagName);
