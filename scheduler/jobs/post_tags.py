@@ -106,7 +106,7 @@ def run_post_tags_process():
                 time.sleep(sleep_s)
                 continue
             # 成功处理后固定冷却时间，避免持续高频循环
-            time.sleep(config.POST_TAGS_COOLDOWN_SECONDS)
+            time.sleep(2)
     except Exception as e:
         print(f"[PostTags][Error] {e}")
     finally:
