@@ -1,8 +1,8 @@
 import React from 'react';
-import { AppBar, Toolbar, Typography, Container, Box, IconButton, Tooltip } from '@mui/material';
-import { Settings as SettingsIcon } from '@mui/icons-material';
+import { AppBar, Toolbar, Typography, Container, Box, IconButton, Tooltip, Badge } from '@mui/material';
+import { FilterAlt as FilterAltIcon, AutoAwesome as AutoAwesomeIcon } from '@mui/icons-material';
 
-const AppLayout = ({ children, onOpenSettings }) => {
+const AppLayout = ({ children, onOpenSettings, onOpenRelevanceFilter, relevanceRemovedCount = 0, excludedCountOnPage = 0 }) => {
   return (
     <Box sx={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       {/* Header区域 */}
@@ -13,10 +13,30 @@ const AppLayout = ({ children, onOpenSettings }) => {
               Konakore Gallery
             </Typography>
 
+            {onOpenRelevanceFilter && (
+              <Tooltip title={relevanceRemovedCount > 0 ? `相关度过滤（本页已过滤 ${relevanceRemovedCount} 条）` : '相关度过滤'}>
+                <IconButton onClick={onOpenRelevanceFilter} size="small" aria-label="relevance filter" sx={{ mr: 0.5 }}>
+                  <Badge
+                    badgeContent={relevanceRemovedCount > 0 ? relevanceRemovedCount : null}
+                    color="error"
+                    max={999}
+                  >
+                    <AutoAwesomeIcon />
+                  </Badge>
+                </IconButton>
+              </Tooltip>
+            )}
+
             {onOpenSettings && (
-              <Tooltip title="设置">
-                <IconButton onClick={onOpenSettings} size="small" aria-label="settings">
-                  <SettingsIcon />
+              <Tooltip title={excludedCountOnPage > 0 ? `排除标签（本页已过滤 ${excludedCountOnPage} 条）` : '排除标签'}>
+                <IconButton onClick={onOpenSettings} size="small" aria-label="excluded tags filter">
+                  <Badge
+                    badgeContent={excludedCountOnPage > 0 ? excludedCountOnPage : null}
+                    color="warning"
+                    max={999}
+                  >
+                    <FilterAltIcon />
+                  </Badge>
                 </IconButton>
               </Tooltip>
             )}

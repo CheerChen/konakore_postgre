@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback, useTransition } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import PhotoSwipeLightbox from 'photoswipe/lightbox';
 import 'photoswipe/style.css';
@@ -18,6 +18,7 @@ import { tagManager } from '../utils/TagManager';
 import { Box, CircularProgress, Typography, Chip } from '@mui/material';
 import { Link as LinkIcon, AspectRatio as SizeIcon, Star as ScoreIcon, DateRange as DateIcon, Storage as FileIcon, Favorite as FavoriteIcon } from '@mui/icons-material';
 import ExcludedTagsModal from '../components/ExcludedTagsModal';
+import RelevanceFilterModal from '../components/RelevanceFilterModal';
 
 const HomePage = () => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -30,6 +31,17 @@ const HomePage = () => {
   const lightboxRef = useRef(null); // 用于存储PhotoSwipe实例
   const slideshowRef = useRef({ interval: null, isPlaying: false }); // 幻灯片播放状态
   const [excludedTagsOpen, setExcludedTagsOpen] = useState(false);
+  const [relevanceFilterOpen, setRelevanceFilterOpen] = useState(false);
+
+  // 状态提升：排除标签和相关度阈值，从 tagManager 初始化
+  const [excludedTags, setExcludedTags] = useState(() => {
+    const config = tagManager.getExcludedPostTagsConfig();
+    return Array.isArray(config?.tags) ? config.tags : [];
+  });
+  const [relevanceThreshold, setRelevanceThreshold] = useState(() => {
+    const config = tagManager.getRelevanceFilterConfig();
+    return Number(config?.threshold) || 0;
+  });
 
   const queryClient = useQueryClient();
 
@@ -168,6 +180,21 @@ const HomePage = () => {
     }
   };
 
+  // 排除标签变更：即时更新 React state + 持久化
+  const handleExcludedTagsChange = (newTags) => {
+    setExcludedTags(newTags);
+    tagManager.setExcludedPostTagsConfig({ tags: newTags });
+  };
+
+  // 相关度阈值变更：useTransition 分离紧急/非紧急更新
+  const [, startTransition] = useTransition();
+  const handleRelevanceThresholdChange = useCallback((newThreshold) => {
+    startTransition(() => {
+      setRelevanceThreshold(newThreshold);
+      tagManager.setRelevanceFilterConfig({ threshold: newThreshold });
+    });
+  }, []);
+
   // --- DATA PROCESSING ---
   let posts = [];
   let isLoading = false;
@@ -191,12 +218,37 @@ const HomePage = () => {
     totalPosts = postsData?.pagination?.total_items || 0;
   }
 
-  // 当前页过滤统计（基于过滤规则与当前页 posts）
+  // 当前页排除标签过滤统计
   const excludedCountOnPage = useMemo(() => {
-    if (!posts?.length) return 0;
-    // 统计应被排除的数量（以当前页原始 posts 为准）
-    return posts.reduce((acc, post) => acc + (tagManager.shouldExcludePost(post) ? 1 : 0), 0);
-  }, [posts]);
+    if (!posts?.length || !excludedTags.length) return 0;
+    return posts.reduce((acc, post) => {
+      const tagsString = tagManager.getPostTagsString(post);
+      if (!tagsString) return acc;
+      const postTags = tagsString.split(' ').filter(Boolean);
+      return acc + (excludedTags.some(t => postTags.includes(t)) ? 1 : 0);
+    }, 0);
+  }, [posts, excludedTags]);
+
+  // 预计算所有 post 的相关度分数（仅在 posts/totalPosts 变化时重算，滑块不触发）
+  const postScoresMap = useMemo(() => {
+    const map = new Map();
+    if (!posts?.length || !tagManager.state.likedPosts?.length) return map;
+    const weightMap = tagManager.learnTfIdf(tagManager.state.likedPosts, totalPosts || 400000);
+    posts.forEach(post => {
+      map.set(post.id, tagManager.scorePost(post, weightMap));
+    });
+    return map;
+  }, [posts, totalPosts]);
+
+  // 相关度过滤统计（基于预计算分数，O(n) 查表）
+  const relevanceRemovedCount = useMemo(() => {
+    if (!posts?.length || relevanceThreshold <= 0 || !postScoresMap.size) return 0;
+    let removed = 0;
+    posts.forEach(post => {
+      if ((postScoresMap.get(post.id) || 0) < relevanceThreshold) removed++;
+    });
+    return removed;
+  }, [posts, relevanceThreshold, postScoresMap]);
 
   // --- MEMOIZED DATA FOR RENDERING ---
   const postsForGrid = useMemo(() => {
@@ -210,15 +262,22 @@ const HomePage = () => {
         : post.liked
     }));
 
+    // 排除标签过滤（基于 React state）
+    let filteredPosts = postsWithUpdatedLikes;
+    if (excludedTags.length > 0) {
+      filteredPosts = filteredPosts.filter(post => {
+        const tagsString = tagManager.getPostTagsString(post);
+        if (!tagsString) return true;
+        const postTags = tagsString.split(' ').filter(Boolean);
+        return !excludedTags.some(t => postTags.includes(t));
+      });
+    }
+
     // 排序逻辑
     let sortedPosts;
 
-    if (sortOption === 'relevance') {
-      // TF-IDF混合排序：使用新的TF-IDF算法
-      sortedPosts = tagManager.sortPostsByTfIdfHybrid(postsWithUpdatedLikes, 'desc', totalPosts);
-    } else {
-      // 其他排序方式：先应用排除标签过滤，再按选项排序
-      sortedPosts = tagManager.sortPosts(postsWithUpdatedLikes, (a, b) => {
+    {
+      sortedPosts = [...filteredPosts].sort((a, b) => {
         switch (sortOption) {
           case 'score':
             return (b.data.score || 0) - (a.data.score || 0);
@@ -260,8 +319,13 @@ const HomePage = () => {
       });
     }
 
+    // 相关度阈值过滤（基于预计算 postScoresMap，O(n) 查表）
+    if (relevanceThreshold > 0 && postScoresMap.size > 0) {
+      sortedPosts = sortedPosts.filter(post => (postScoresMap.get(post.id) || 0) >= relevanceThreshold);
+    }
+
     return sortedPosts;
-  }, [posts, sortOption, postsLikeState]);
+  }, [posts, sortOption, postsLikeState, excludedTags, relevanceThreshold, postScoresMap]);
 
   // 提取当前页面所有tags并更新缓存
   const currentPageTags = useMemo(() => {
@@ -551,11 +615,27 @@ const HomePage = () => {
   };
 
   return (
-    <AppLayout onOpenSettings={() => setExcludedTagsOpen(true)}>
+    <AppLayout
+      onOpenSettings={() => setExcludedTagsOpen(true)}
+      onOpenRelevanceFilter={() => setRelevanceFilterOpen(true)}
+      relevanceRemovedCount={relevanceRemovedCount}
+      excludedCountOnPage={excludedCountOnPage}
+    >
       <ExcludedTagsModal
         open={excludedTagsOpen}
         onClose={() => setExcludedTagsOpen(false)}
+        excludedTags={excludedTags}
+        onExcludedTagsChange={handleExcludedTagsChange}
         excludedCountOnPage={excludedCountOnPage}
+      />
+      <RelevanceFilterModal
+        open={relevanceFilterOpen}
+        onClose={() => setRelevanceFilterOpen(false)}
+        posts={posts}
+        totalPosts={totalPosts}
+        threshold={relevanceThreshold}
+        onThresholdChange={handleRelevanceThresholdChange}
+        postScoresMap={postScoresMap}
       />
       <SearchBar
         onSearch={handleSearch}
