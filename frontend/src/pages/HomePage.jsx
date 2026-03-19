@@ -282,6 +282,11 @@ const HomePage = () => {
     return mergeTagsWithCache(currentPageTags);
   }, [currentPageTags, mergeTagsWithCache]);
 
+  // 计算当前页面的收藏数
+  const currentPageLikedCount = useMemo(() => {
+    return postsForGrid.filter(post => post.liked).length;
+  }, [postsForGrid]);
+
   // --- PHOTOSWIPE SETUP ---
   // 仅在组件挂载时初始化PhotoSwipe
   useEffect(() => {
@@ -510,6 +515,7 @@ const HomePage = () => {
           onLikedFilterChange={handleLikedFilterChange}
           showLikedArtistsOnly={showLikedArtistsOnly}
           onLikedArtistsFilterChange={handleLikedArtistsFilterChange}
+          currentPageLikedCount={currentPageLikedCount}
         />
         {isLoading ? (
           <Box sx={{
