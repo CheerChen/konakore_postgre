@@ -194,6 +194,30 @@ class UserPreferencesResponse(BaseModel):
     generated_at: float
 
 
+class LikedPostItem(BaseModel):
+    """Lightweight representation of a liked post for TF-IDF learning."""
+    id: int
+    tags: str = Field(..., description="Space-separated tag string")
+    score: Optional[int] = Field(default=0, description="Post score")
+    rating: Optional[str] = Field(default='s', description="Content rating (s/q/e)")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "id": 123456,
+                "tags": "artist_name 1girl solo long_hair",
+                "score": 100,
+                "rating": "s"
+            }
+        }
+
+
+class ListLikedPostsResponse(BaseModel):
+    """Response model for listing liked posts."""
+    posts: List[LikedPostItem]
+    pagination: PaginationInfo
+
+
 class ErrorDetail(BaseModel):
     """Error detail structure following AIP-193."""
     code: str

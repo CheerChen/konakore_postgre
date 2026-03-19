@@ -1,12 +1,16 @@
 """
 Users router - handles all user-related endpoints.
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from psycopg2.extras import RealDictCursor
 import time
 import logging
+from typing import Optional
 
-from models import UserPreferencesResponse, UserPreferenceTag, UserPreferencesStats
+from models import (
+    UserPreferencesResponse, UserPreferenceTag, UserPreferencesStats,
+    ListLikedPostsResponse, LikedPostItem, PaginationInfo
+)
 from utils import get_db_connection
 
 router = APIRouter(prefix="/v1/users", tags=["users"])
@@ -87,3 +91,85 @@ def get_current_user_preferences():
                 statistics=UserPreferencesStats(**total_stats),
                 generated_at=time.time()
             )
+
+
+@router.get("/me/liked-posts", response_model=ListLikedPostsResponse)
+def get_current_user_liked_posts(
+    page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
+    limit: int = Query(default=3000, ge=1, le=5000, description="Number of posts per page (default 3000, max 5000)"),
+    fields: str = Query(default="tags,score,rating", description="Comma-separated fields to return")
+):
+    """
+    Get current user's liked posts for TF-IDF learning and preference modeling.
+    
+    Returns lightweight post data with only the requested fields to minimize data transfer.
+    Default limit is 3000 posts which should be sufficient for building accurate user profiles.
+    
+    Recommended client-side caching: 30 minutes (same as preferences endpoint).
+    
+    Fields:
+    - tags: Space-separated tag string (required for TF-IDF)
+    - score: Post score/popularity
+    - rating: Content rating (s=safe, q=questionable, e=explicit)
+    
+    In a multi-tenant system, this would use authentication to identify the user.
+    Currently returns liked posts for the single implicit user.
+    """
+    # Enforce limit
+    limit = min(limit, 5000)
+    offset = (page - 1) * limit
+    
+    # Parse requested fields
+    requested_fields = set(fields.split(','))
+    
+    with get_db_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Get total count
+            cur.execute("SELECT COUNT(*) as count FROM posts WHERE is_liked = TRUE")
+            result = cur.fetchone()
+            total_count = result['count'] if result else 0
+            
+            # Get liked posts with raw_data
+            cur.execute("""
+                SELECT id, raw_data
+                FROM posts 
+                WHERE is_liked = TRUE 
+                ORDER BY id DESC 
+                LIMIT %s OFFSET %s
+            """, (limit, offset))
+            
+            db_posts = cur.fetchall()
+            
+            # Extract only requested fields from raw_data
+            posts = []
+            for row in db_posts:
+                post_data = {'id': row['id']}
+                raw = row['raw_data']
+                
+                # tags field is required for TF-IDF
+                if 'tags' in requested_fields:
+                    post_data['tags'] = raw.get('tags', '')
+                else:
+                    post_data['tags'] = ''  # Always include tags field
+                
+                if 'score' in requested_fields:
+                    post_data['score'] = raw.get('score', 0)
+                
+                if 'rating' in requested_fields:
+                    post_data['rating'] = raw.get('rating', 's')
+                
+                posts.append(LikedPostItem(**post_data))
+            
+            # Calculate pagination
+            total_pages = (total_count + limit - 1) // limit if total_count > 0 else 0
+            
+            pagination = PaginationInfo(
+                current_page=page,
+                per_page=limit,
+                total_items=total_count,
+                total_pages=total_pages,
+                has_next=page < total_pages,
+                has_prev=page > 1
+            )
+            
+            return ListLikedPostsResponse(posts=posts, pagination=pagination)
