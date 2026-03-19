@@ -5,6 +5,7 @@ import requests
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from dotenv import load_dotenv
 from psycopg2.extras import RealDictCursor
 
@@ -20,9 +21,11 @@ logger = logging.getLogger(__name__)
 origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
-    "http://192.168.0.110:5173",  # NAS frontend
-    "http://192.168.0.110:8080",  # Alternative port
+    "http://192.168.0.110:5173",
 ]
+
+# Add GZip middleware for response compression
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 app.add_middleware(
     CORSMiddleware,
@@ -113,23 +116,28 @@ def read_root():
     }
 
 @app.get("/posts")
-def get_posts(page: int = 1, limit: int = 100, liked: bool = None):
+def get_posts(page: int = 1, limit: int = 100, liked = None):
     """Fetches a paginated list of posts from the database."""
     # 限制每页最大数量，防止查询过大
     limit = min(limit, 500)
     offset = (page - 1) * limit
     
+    # 转换 liked 参数
+    liked_filter = None
+    if liked is not None:
+        liked_filter = str(liked).lower() in ('true', '1', 'yes')
+    
     with get_db_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             # 获取总数
-            if liked is True:
+            if liked_filter is True:
                 cur.execute("SELECT COUNT(*) FROM posts WHERE is_liked = TRUE")
             else:
                 cur.execute("SELECT COUNT(*) FROM posts")
             total_count = cur.fetchone()['count']
             
             # 获取分页数据
-            if liked is True:
+            if liked_filter is True:
                 cur.execute(
                     "SELECT id, raw_data, is_processed, is_liked, last_synced_at FROM posts WHERE is_liked = TRUE ORDER BY id DESC LIMIT %s OFFSET %s",
                     (limit, offset)
@@ -165,17 +173,63 @@ def get_post(post_id: int):
     return post
 
 @app.get("/tags")
-def get_tags(page: int = 1, limit: int = 20):
-    """Fetches a paginated list of tags from the database."""
+def get_tags(page: int = 1, limit: int = 100, liked = None):
+    """获取指定posts参数范围内的tags统计信息
+    参数:
+    - page: 页码 (默认1)
+    - limit: 每页posts数量限制 (默认100)  
+    - liked: 是否只包含收藏的posts (可选)
+    
+    返回: 对应posts范围内所有tags的name、count、type信息
+    """
+    # 限制每页最大数量，防止查询过大
+    limit = min(limit, 500)
     offset = (page - 1) * limit
+    
+    # 转换 liked 参数
+    liked_filter = None
+    if liked is not None:
+        liked_filter = str(liked).lower() in ('true', '1', 'yes')
+    
     with get_db_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # 先获取指定范围的posts
+            if liked_filter is True:
+                cur.execute(
+                    "SELECT id FROM posts WHERE is_liked = TRUE ORDER BY id DESC LIMIT %s OFFSET %s",
+                    (limit, offset)
+                )
+            else:
+                cur.execute(
+                    "SELECT id FROM posts ORDER BY id DESC LIMIT %s OFFSET %s",
+                    (limit, offset)
+                )
+            
+            posts = cur.fetchall()
+            if not posts:
+                return []
+            
+            post_ids = [post['id'] for post in posts]
+            
+            # 查询这些posts关联的所有tags及其统计信息
+            placeholders = ','.join(['%s'] * len(post_ids))
             cur.execute(
-                "SELECT id, name, count, type, ambiguous, last_synced_at FROM tags ORDER BY count DESC LIMIT %s OFFSET %s",
-                (limit, offset)
+                f"""
+                SELECT 
+                    t.name,
+                    t.type,
+                    COUNT(pt.post_id) as count
+                FROM tags t
+                JOIN post_tags pt ON t.id = pt.tag_id
+                WHERE pt.post_id IN ({placeholders})
+                GROUP BY t.id, t.name, t.type
+                ORDER BY count DESC, t.name ASC
+                """,
+                post_ids
             )
+            
             tags = cur.fetchall()
-    return tags
+            return tags
 
 @app.get("/tags/{tag_id}")
 def get_tag(tag_id: int):
@@ -187,7 +241,7 @@ def get_tag(tag_id: int):
 
 
 @app.get("/search/tags")
-def search_tags(q: str, page: int = 1, limit: int = 100, liked: bool = None):
+def search_tags(q: str, page: int = 1, limit: int = 100, liked = None):
     """搜索tags并返回关联的posts，使用和/posts相同的分页格式
     参数:
     - q: 搜索关键词 (最少2个字符)，精确匹配tag名称
@@ -205,6 +259,11 @@ def search_tags(q: str, page: int = 1, limit: int = 100, liked: bool = None):
     # 限制每页最大数量，防止查询过大
     limit = min(limit, 500)
     offset = (page - 1) * limit
+    
+    # 转换 liked 参数
+    liked_filter = None
+    if liked is not None:
+        liked_filter = str(liked).lower() in ('true', '1', 'yes')
     
     with get_db_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -232,7 +291,7 @@ def search_tags(q: str, page: int = 1, limit: int = 100, liked: bool = None):
             tag_id = tag["id"]
             
             # 获取总数
-            if liked is True:
+            if liked_filter is True:
                 cur.execute(
                     """
                     SELECT COUNT(*)
@@ -255,7 +314,7 @@ def search_tags(q: str, page: int = 1, limit: int = 100, liked: bool = None):
             total_count = cur.fetchone()['count']
             
             # 获取分页数据
-            if liked is True:
+            if liked_filter is True:
                 cur.execute(
                     """
                     SELECT p.id, p.raw_data, p.is_processed, p.is_liked, p.last_synced_at
