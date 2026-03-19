@@ -10,15 +10,10 @@ import AppLayout from '../components/AppLayout';
 import PaginationControls from '../components/PaginationControls';
 import SimplePagination from '../components/SimplePagination';
 import LazyImageCard from '../components/LazyImageCard';
-import { getPosts, searchTags } from '../api';
+import { getPosts, searchTags, getTags } from '../api';
 import { formatFileSize, formatDate } from '../utils/formatters';
 import { getImageUrl, getImageDimensionsText } from '../utils/imageUtils';
-import { 
-  loadTagsFromStorage, 
-  addTagsToCache, 
-  extractTagsFromPosts, 
-  mergeTagsWithCache 
-} from '../utils/tagsCache';
+import { useTag } from '../contexts/TagContext';
 import { Box, CircularProgress, Typography, Chip } from '@mui/material';
 import { Link as LinkIcon, AspectRatio as SizeIcon, Star as ScoreIcon, DateRange as DateIcon, Storage as FileIcon, Favorite as FavoriteIcon } from '@mui/icons-material';
 
@@ -31,11 +26,32 @@ const HomePage = () => {
   const [postsLikeState, setPostsLikeState] = useState({}); // 本地收藏状态缓存
   
   const queryClient = useQueryClient();
+  
+  // 使用新的 useTag Hook
+  const {
+    fetchTagInfo,
+    addTagsToCache,
+    extractTagsFromPosts,
+    mergeTagsWithCache,
+    getTagColors,
+    getTagTranslation,
+    isLoading: tagsLoading
+  } = useTag();
 
-  // 初始化时从localStorage加载缓存
+  // 当页面或筛选条件变化时，获取并缓存tag信息
   useEffect(() => {
-    loadTagsFromStorage();
-  }, []);
+    const fetchTagInfoData = async () => {
+      try {
+        await fetchTagInfo(currentPage, perPage, showLikedOnly ? true : null);
+      } catch (error) {
+        console.warn('Failed to fetch tag info:', error);
+      }
+    };
+
+    // 延迟执行以避免过于频繁的API调用
+    const timeoutId = setTimeout(fetchTagInfoData, 300);
+    return () => clearTimeout(timeoutId);
+  }, [currentPage, perPage, showLikedOnly, fetchTagInfo]);
 
   // 处理来自LazyImageCard的收藏状态变化
   const handleLikeChange = (postId, isLiked) => {
@@ -192,12 +208,12 @@ const HomePage = () => {
     }
     
     return result;
-  }, [postsForGrid]);
+  }, [postsForGrid, extractTagsFromPosts, addTagsToCache]);
 
   // 智能的tags数据源：缓存标签优先，当前页面标签次之
   const availableTags = useMemo(() => {
     return mergeTagsWithCache(currentPageTags);
-  }, [currentPageTags]);
+  }, [currentPageTags, mergeTagsWithCache]);
 
   // --- PHOTOSWIPE SETUP ---
   useEffect(() => {
@@ -433,36 +449,40 @@ const HomePage = () => {
               maxWidth: '80vw',
               marginBottom: '16px'
             }}>
-              {post.raw_data.tags?.split(' ').filter(Boolean).map((tag, tagIndex) => (
-                <Chip
-                  key={tagIndex}
-                  label={tag}
-                  size="small"
-                  clickable
-                  data-tag={tag}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleTagClick(tag);
-                  }}
-                  sx={{
-                    fontSize: '11px',
-                    height: '20px',
-                    cursor: 'pointer',
-                    backgroundColor: 'rgba(144, 202, 249, 0.2)',
-                    color: '#90caf9',
-                    border: '1px solid rgba(144, 202, 249, 0.3)',
-                    fontFamily: '"Inter", "Roboto", "Noto Sans SC", sans-serif',
-                    fontWeight: 400,
-                    '&:hover': {
-                      backgroundColor: 'rgba(144, 202, 249, 0.3)',
-                    },
-                    '& .MuiChip-label': {
-                      px: 1,
-                      fontFamily: '"Inter", "Roboto", "Noto Sans SC", sans-serif'
-                    }
-                  }}
-                />
-              ))}
+              {post.raw_data.tags?.split(' ').filter(Boolean).map((tag, tagIndex) => {
+                const tagColors = getTagColors(tag);
+                const translatedTag = getTagTranslation(tag);
+                return (
+                  <Chip
+                    key={tagIndex}
+                    label={translatedTag}
+                    size="small"
+                    clickable
+                    data-tag={tag}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleTagClick(tag);
+                    }}
+                    sx={{
+                      fontSize: '11px',
+                      height: '20px',
+                      cursor: 'pointer',
+                      backgroundColor: tagColors.backgroundColor,
+                      color: tagColors.color,
+                      border: tagColors.border,
+                      fontFamily: '"Inter", "Roboto", "Noto Sans SC", sans-serif',
+                      fontWeight: 400,
+                      '&:hover': {
+                        backgroundColor: tagColors.hoverColor,
+                      },
+                      '& .MuiChip-label': {
+                        px: 1,
+                        fontFamily: '"Inter", "Roboto", "Noto Sans SC", sans-serif'
+                      }
+                    }}
+                  />
+                );
+              })}
             </div>
             
             {/* Info section */}
