@@ -28,17 +28,27 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange }) => {
 
   // 懒加载监听
   const { ref, inView } = useInView({
-    triggerOnce: true,
-    threshold: 0.1,
-    rootMargin: '50px'
+    triggerOnce: false, // 允许多次触发，用于防抖
+    threshold: 0, // 元素一出现就触发
+    rootMargin: '400px 0px' // 上下预加载区域扩大到400px
   });
 
-  // 当图片进入视口时，直接开始加载
+  // 防抖加载逻辑
   useEffect(() => {
-    if (inView && !shouldLoadImage && !imageError && !isRetrying) {
-      setShouldLoadImage(true);
+    let timerId;
+    // 当图片进入预加载区域，且尚未决定加载时
+    if (inView && !shouldLoadImage) {
+      // 启动一个计时器
+      timerId = setTimeout(() => {
+        setShouldLoadImage(true);
+      }, 200); // 200毫秒防抖延迟
     }
-  }, [inView, shouldLoadImage, imageError, isRetrying]);
+
+    // 清理函数：当组件卸载或inView变化时，清除计时器
+    return () => {
+      clearTimeout(timerId);
+    };
+  }, [inView, shouldLoadImage]);
 
   // 重试加载图片的函数
   const retryLoadImage = async () => {
@@ -161,7 +171,7 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange }) => {
             : '4 / 3'
         }}
       >
-      {inView ? (
+      {shouldLoadImage ? (
         <>
           {(!imageLoaded && !imageError) || isRetrying ? (
             <Skeleton 
@@ -176,6 +186,7 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange }) => {
             <Fade in={imageLoaded} timeout={600}>
               <CardMedia
                 component="img"
+                decoding="async" // 异步解码图片
                 image={imageUrl}
                 alt="image"
                 onClick={() => onImageClick(index)}

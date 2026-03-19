@@ -111,6 +111,8 @@ class TagManager {
       translationObserver: null,          // MutationObserver实例
       userPreferences: null,              // 用户偏好数据
       preferencesLastFetch: null,         // 上次获取偏好数据的时间
+      isFetchingPreferences: false,       // 防止重复请求用户偏好
+      isFetchingTranslations: false,      // 防止重复请求翻译文件
     };
     
     // 事件监听器
@@ -276,6 +278,12 @@ class TagManager {
    * @param {boolean} forceRefresh - 是否强制刷新数据
    */
   async fetchUserPreferences(forceRefresh = false) {
+    // 如果正在请求，则直接返回，避免重复
+    if (this.state.isFetchingPreferences) {
+      console.warn('Fetch user preferences already in progress.');
+      return this.state.userPreferences;
+    }
+
     try {
       // 检查是否需要刷新数据（缓存30分钟）
       const now = Date.now();
@@ -287,6 +295,8 @@ class TagManager {
           (now - this.state.preferencesLastFetch) < cacheTime) {
         return this.state.userPreferences;
       }
+
+      this.state.isFetchingPreferences = true; // 设置状态锁
 
       const preferences = await getUserPreferences();
       
@@ -302,6 +312,8 @@ class TagManager {
     } catch (error) {
       console.warn('Failed to fetch user preferences:', error);
       return null;
+    } finally {
+      this.state.isFetchingPreferences = false; // 释放状态锁
     }
   }
 
@@ -667,13 +679,24 @@ class TagManager {
     try {
       // 检查是否已加载翻译数据
       if (!this.state.translations) {
-        const response = await fetch("https://cdn.jsdelivr.net/gh/asadahimeka/yandere-masonry@main/src/data/all_tags_cn.min.json");
-        if (response.ok) {
-          this.state.translations = await response.json();
-          this.notify({ type: 'translations-loaded', data: this.state.translations });
-        } else {
-          console.warn('Failed to load tag translations');
+        // 如果正在请求，则直接返回，避免重复
+        if (this.state.isFetchingTranslations) {
+          console.warn('Fetch translations already in progress.');
           return;
+        }
+        
+        this.state.isFetchingTranslations = true; // 设置状态锁
+        try {
+          const response = await fetch("https://cdn.jsdelivr.net/gh/asadahimeka/yandere-masonry@main/src/data/all_tags_cn.min.json");
+          if (response.ok) {
+            this.state.translations = await response.json();
+            this.notify({ type: 'translations-loaded', data: this.state.translations });
+          } else {
+            console.warn('Failed to load tag translations');
+            return;
+          }
+        } finally {
+          this.state.isFetchingTranslations = false; // 释放状态锁
         }
       }
 
