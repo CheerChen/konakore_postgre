@@ -1,0 +1,246 @@
+"""
+Tags router - handles all tag-related endpoints.
+"""
+from fastapi import APIRouter, HTTPException, Query, Body
+from psycopg2.extras import RealDictCursor
+from typing import Optional
+from pydantic import BaseModel, Field
+import logging
+
+from models import (
+    ListTagsResponse, TagSummary, Tag,
+    GetTagResponse, SearchTagsResponse, Post, PaginationInfo,
+    db_post_to_api, db_tag_to_api
+)
+from utils import get_db_connection
+
+router = APIRouter(prefix="/v1/tags", tags=["tags"])
+logger = logging.getLogger(__name__)
+
+
+class SearchTagsRequestBody(BaseModel):
+    """Request body for searching tags."""
+    query: str = Field(..., min_length=2, description="Search query (minimum 2 characters)")
+    page: int = Field(default=1, ge=1, description="Page number (1-indexed)")
+    page_size: int = Field(default=100, ge=1, le=500, description="Number of posts per page", alias="pageSize")
+    liked: Optional[bool] = Field(default=None, description="Filter by liked status")
+    
+    class Config:
+        populate_by_name = True
+
+
+@router.get("", response_model=ListTagsResponse)
+def list_tags(
+    page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
+    limit: int = Query(default=100, ge=1, le=500, description="Number of posts to consider"),
+    liked: Optional[bool] = Query(default=None, description="Filter posts by liked status")
+):
+    """
+    List tags aggregated from a range of posts.
+    
+    Returns tag statistics for the specified posts range.
+    This is useful for getting tag distribution across recent or liked posts.
+    """
+    # Limit enforcement
+    limit = min(limit, 500)
+    offset = (page - 1) * limit
+    
+    # Convert liked parameter
+    liked_filter = None
+    if liked is not None:
+        liked_filter = bool(liked)
+    
+    with get_db_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Get posts in the specified range
+            if liked_filter is True:
+                cur.execute(
+                    "SELECT id FROM posts WHERE is_liked = TRUE ORDER BY id DESC LIMIT %s OFFSET %s",
+                    (limit, offset)
+                )
+            else:
+                cur.execute(
+                    "SELECT id FROM posts ORDER BY id DESC LIMIT %s OFFSET %s",
+                    (limit, offset)
+                )
+            
+            posts = cur.fetchall()
+            if not posts:
+                return ListTagsResponse(tags=[])
+            
+            post_ids = [post['id'] for post in posts]
+            
+            # Query tags associated with these posts
+            placeholders = ','.join(['%s'] * len(post_ids))
+            cur.execute(
+                f"""
+                SELECT 
+                    t.name,
+                    t.type,
+                    COUNT(pt.post_id) as count
+                FROM tags t
+                JOIN post_tags pt ON t.id = pt.tag_id
+                WHERE pt.post_id IN ({placeholders})
+                GROUP BY t.id, t.name, t.type
+                ORDER BY count DESC, t.name ASC
+                """,
+                post_ids
+            )
+            
+            db_tags = cur.fetchall()
+            tags = [TagSummary(**tag) for tag in db_tags]
+            
+            return ListTagsResponse(tags=tags)
+
+
+@router.get("/{tag_id}", response_model=GetTagResponse)
+def get_tag(tag_id: int):
+    """Get a specific tag by ID."""
+    with get_db_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT id, name, count, type, ambiguous, last_synced_at FROM tags WHERE id = %s",
+                (tag_id,)
+            )
+            db_tag = cur.fetchone()
+            
+            if not db_tag:
+                raise HTTPException(status_code=404, detail=f"Tag with id {tag_id} not found")
+            
+            tag = Tag(**db_tag_to_api(db_tag))
+            return GetTagResponse(tag=tag)
+
+
+@router.post(":search", response_model=SearchTagsResponse)
+def search_tags(request: SearchTagsRequestBody = Body(...)):
+    """
+    Search tags and return associated posts (custom method following AIP-136).
+    
+    Performs exact match on tag name and returns paginated posts.
+    This is a POST endpoint to support complex search parameters in the request body.
+    """
+    # Validate and extract parameters
+    query = request.query.strip()
+    page = request.page
+    page_size = min(request.page_size, 500)
+    offset = (page - 1) * page_size
+    liked_filter = request.liked
+    
+    with get_db_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Exact match on tag name
+            cur.execute(
+                "SELECT id FROM tags WHERE name = %s",
+                (query,)
+            )
+            tag = cur.fetchone()
+            
+            if not tag:
+                # Return empty result for non-existent tag
+                return SearchTagsResponse(
+                    posts=[],
+                    pagination=PaginationInfo(
+                        current_page=page,
+                        per_page=page_size,
+                        total_items=0,
+                        total_pages=0,
+                        has_next=False,
+                        has_prev=False
+                    ),
+                    search_query=query
+                )
+            
+            tag_id = tag["id"]
+            
+            # Get total count
+            if liked_filter is True:
+                cur.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM posts p
+                    JOIN post_tags pt ON p.id = pt.post_id
+                    WHERE pt.tag_id = %s AND p.is_liked = TRUE
+                    """,
+                    (tag_id,)
+                )
+            elif liked_filter is False:
+                cur.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM posts p
+                    JOIN post_tags pt ON p.id = pt.post_id
+                    WHERE pt.tag_id = %s AND p.is_liked = FALSE
+                    """,
+                    (tag_id,)
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM posts p
+                    JOIN post_tags pt ON p.id = pt.post_id
+                    WHERE pt.tag_id = %s
+                    """,
+                    (tag_id,)
+                )
+            total_count = cur.fetchone()['count']
+            
+            # Get paginated data
+            if liked_filter is True:
+                cur.execute(
+                    """
+                    SELECT p.id, p.raw_data, p.is_processed, p.is_liked, p.last_synced_at
+                    FROM posts p
+                    JOIN post_tags pt ON p.id = pt.post_id
+                    WHERE pt.tag_id = %s AND p.is_liked = TRUE
+                    ORDER BY p.id DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (tag_id, page_size, offset)
+                )
+            elif liked_filter is False:
+                cur.execute(
+                    """
+                    SELECT p.id, p.raw_data, p.is_processed, p.is_liked, p.last_synced_at
+                    FROM posts p
+                    JOIN post_tags pt ON p.id = pt.post_id
+                    WHERE pt.tag_id = %s AND p.is_liked = FALSE
+                    ORDER BY p.id DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (tag_id, page_size, offset)
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT p.id, p.raw_data, p.is_processed, p.is_liked, p.last_synced_at
+                    FROM posts p
+                    JOIN post_tags pt ON p.id = pt.post_id
+                    WHERE pt.tag_id = %s
+                    ORDER BY p.id DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (tag_id, page_size, offset)
+                )
+            db_posts = cur.fetchall()
+            
+            # Convert to API models
+            posts = [Post(**db_post_to_api(row)) for row in db_posts]
+            
+            # Calculate pagination
+            total_pages = (total_count + page_size - 1) // page_size
+            
+            pagination = PaginationInfo(
+                current_page=page,
+                per_page=page_size,
+                total_items=total_count,
+                total_pages=total_pages,
+                has_next=page < total_pages,
+                has_prev=page > 1
+            )
+            
+            return SearchTagsResponse(
+                posts=posts,
+                pagination=pagination,
+                search_query=query
+            )
