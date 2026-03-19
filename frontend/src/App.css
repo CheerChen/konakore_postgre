@@ -40,3 +40,41 @@
 .read-the-docs {
   color: #888;
 }
+
+/* PhotoSwipe 幻灯片播放按钮样式 */
+.pswp__button--slideshow {
+  width: 50px;
+  height: 60px;
+}
+
+.pswp__button--slideshow .pswp__icn {
+  width: 32px;
+  height: 32px;
+  transition: transform 0.2s ease;
+  /* 添加阴影效果 */
+  filter: drop-shadow(1px 1px 2px rgba(0, 0, 0, 0.5));
+}
+
+/* 确保 SVG 内部元素使用正确的颜色 */
+.pswp__button--slideshow .pswp__icn path,
+.pswp__button--slideshow .pswp__icn rect {
+  fill: var(--pswp-icon-color, #fff);
+}
+
+.pswp__button--slideshow:hover .pswp__icn {
+  transform: scale(1.15);
+  /* 悬停时增强阴影 */
+  filter: drop-shadow(2px 2px 4px rgba(0, 0, 0, 0.7));
+}
+
+.pswp__button--slideshow:active .pswp__icn {
+  transform: scale(0.9);
+  /* 按下时减弱阴影 */
+  filter: drop-shadow(0.5px 0.5px 1px rgba(0, 0, 0, 0.4));
+}
+
+/* 播放状态下的按钮额外效果 */
+.pswp__button--slideshow.pswp__button--playing .pswp__icn {
+  /* 播放时可以添加更强的阴影表示活跃状态 */
+  filter: drop-shadow(1px 1px 3px rgba(0, 0, 0, 0.6));
+}
