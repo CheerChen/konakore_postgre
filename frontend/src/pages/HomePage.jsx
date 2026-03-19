@@ -25,6 +25,7 @@ const HomePage = () => {
   const [sortOption, setSortOption] = useState('id'); // 默认按ID降序
   const [showLikedOnly, setShowLikedOnly] = useState(false);
   const [postsLikeState, setPostsLikeState] = useState({}); // 本地收藏状态缓存
+  const lightboxRef = useRef(null); // 用于存储PhotoSwipe实例
   
   const queryClient = useQueryClient();
   
@@ -244,133 +245,88 @@ const HomePage = () => {
   }, [currentPageTags, mergeTagsWithCache]);
 
   // --- PHOTOSWIPE SETUP ---
+  // 仅在组件挂载时初始化PhotoSwipe
   useEffect(() => {
-    if (!postsForGrid.length) {
-      return;
-    }
+    const lightbox = new PhotoSwipeLightbox({
+      pswpModule: () => import('photoswipe'),
+      showHideAnimationType: 'fade',
+      bgOpacity: 0.8,
+      dataSource: [], // 初始为空，后续动态更新
+    });
 
-    // 延迟初始化，确保数据已经准备好
-    const timeoutId = setTimeout(() => {
-      // 检查是否有数据
-      if (!postsForGrid.length) {
-        return;
-      }
+    new PhotoSwipeFullscreen(lightbox);
 
-      const lightbox = new PhotoSwipeLightbox({
-        pswpModule: () => import('photoswipe'),
-        // 显式启用所有UI元素
-        showHideAnimationType: 'fade',
-        bgOpacity: 0.8,
-        // 自定义数据源解析
-        dataSource: postsForGrid.map((post, index) => ({
-          src: getImageUrl(post.raw_data?.sample_url || post.raw_data?.jpeg_url || post.raw_data?.file_url),
-          msrc: getImageUrl(post.raw_data?.preview_url), // 微图占位符
-          w: post.raw_data.width,
-          h: post.raw_data.height,
-          alt: post.raw_data.tags,
-          postId: post.id
-        }))
-      });
-
-      // 添加全屏插件
-      const fullscreenPlugin = new PhotoSwipeFullscreen(lightbox);
-
-      // 确保PhotoSwipe初始化时全屏按钮可用
-      lightbox.on('init', () => {
-        console.log('PhotoSwipe initialized with fullscreen plugin');
-      });
-
-      lightbox.on('uiRegister', () => {
-        console.log('PhotoSwipe UI registered');
-        
-        // 注册自定义标题元素
-        lightbox.pswp.ui.registerElement({
-          name: 'custom-caption',
-          order: 9,
-          isButton: false,
-          appendTo: 'root',
-          html: 'Caption text',
-          onInit: (el, pswp) => {
-            // 设置标题容器样式
-            el.style.cssText = `
-              position: absolute;
-              bottom: 20px;
-              left: 50%;
-              transform: translateX(-50%);
-              z-index: 1000;
-              max-width: 90vw;
-            `;
-            
-            pswp.on('change', () => {
-              // 获取当前幻灯片数据
-              const currentSlide = pswp.currSlide;
-              const slideData = currentSlide?.data;
-              const postId = slideData?.postId;
-              
-              if (postId) {
-                // 找到对应的隐藏标题内容
-                const captionEl = document.querySelector(`[data-caption-id="${postId}"]`);
-                if (captionEl) {
-                  el.innerHTML = captionEl.innerHTML;
-                  
-                  // 重新绑定标签点击事件
-                  const tagElements = el.querySelectorAll('[data-tag]');
-                  tagElements.forEach(tagEl => {
-                    const tag = tagEl.getAttribute('data-tag');
-                    tagEl.addEventListener('click', (e) => {
-                      e.stopPropagation();
-                      // 关闭 PhotoSwipe 并在关闭后触发搜索
-                      pswp.close();
-                      // 延迟执行搜索以确保 PhotoSwipe 完全关闭
-                      setTimeout(() => {
-                        handleTagClick(tag);
-                      }, 100);
-                    });
+    lightbox.on('uiRegister', () => {
+      lightbox.pswp.ui.registerElement({
+        name: 'custom-caption',
+        order: 9,
+        isButton: false,
+        appendTo: 'root',
+        html: 'Caption text',
+        onInit: (el, pswp) => {
+          el.style.cssText = `
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            max-width: 90vw;
+          `;
+          pswp.on('change', () => {
+            const slideData = pswp.currSlide?.data;
+            const postId = slideData?.postId;
+            if (postId) {
+              const captionEl = document.querySelector(`[data-caption-id="${postId}"]`);
+              if (captionEl) {
+                el.innerHTML = captionEl.innerHTML;
+                const tagElements = el.querySelectorAll('[data-tag]');
+                tagElements.forEach(tagEl => {
+                  const tag = tagEl.getAttribute('data-tag');
+                  tagEl.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    pswp.close();
+                    setTimeout(() => handleTagClick(tag), 100);
                   });
-                  
-                  console.log('Caption updated for image:', postId);
-                } else {
-                  el.innerHTML = '';
-                  console.log('No caption found for image:', postId);
-                }
+                });
               } else {
                 el.innerHTML = '';
-                console.log('No ID found for current slide');
               }
-            });
-            
-            // 初始化时也执行一次
-            setTimeout(() => {
-              pswp.dispatch('change');
-            }, 50);
-          },
-        });
+            } else {
+              el.innerHTML = '';
+            }
+          });
+          setTimeout(() => pswp.dispatch('change'), 50);
+        },
       });
+    });
 
-      lightbox.on('change', () => {
-        console.log('PhotoSwipe slide changed');
-      });
-
-      lightbox.on('openingAnimationStart', () => {
-        console.log('PhotoSwipe opening animation started');
-      });
-
-      lightbox.init();
-
-      // 存储 lightbox 引用以便清理和调用
-      window.currentLightbox = lightbox;
-      
-      console.log('PhotoSwipe initialized and stored in window.currentLightbox');
-    }, 100); // 延迟 100ms
+    lightbox.init();
+    lightboxRef.current = lightbox;
+    window.currentLightbox = lightbox; // 保持对window的引用
 
     return () => {
-      clearTimeout(timeoutId);
-      if (window.currentLightbox) {
-        window.currentLightbox.destroy();
-        window.currentLightbox = null;
+      if (lightboxRef.current) {
+        lightboxRef.current.destroy();
+        lightboxRef.current = null;
       }
+      window.currentLightbox = null;
     };
-  }, [postsForGrid]); // 当postsForGrid内容变化时重新初始化PhotoSwipe
+  }, []); // 空依赖数组，确保只执行一次
+
+  // 当图片数据更新时，动态更新PhotoSwipe的数据源
+  useEffect(() => {
+    if (lightboxRef.current && postsForGrid.length > 0) {
+      const newDataSource = postsForGrid.map(post => ({
+        src: getImageUrl(post.raw_data?.sample_url || post.raw_data?.jpeg_url || post.raw_data?.file_url),
+        msrc: getImageUrl(post.raw_data?.preview_url),
+        w: post.raw_data.width,
+        h: post.raw_data.height,
+        alt: post.raw_data.tags,
+        postId: post.id,
+      }));
+      lightboxRef.current.options.dataSource = newDataSource;
+    }
+  }, [postsForGrid]);
 
   // --- RENDER LOGIC ---
   const renderContent = () => {
