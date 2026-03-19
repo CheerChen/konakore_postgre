@@ -2,9 +2,12 @@ FROM python:3.9-slim
 
 WORKDIR /app
 
-# Install dependencies
-COPY file_sync/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Install dependencies using uv
+COPY file_sync/pyproject.toml .
+RUN uv venv && uv pip install -r pyproject.toml
 
 # Copy the application code preserving package directory
 COPY file_sync ./file_sync
@@ -16,4 +19,4 @@ ENV PYTHONUNBUFFERED=1
 EXPOSE 8090
 
 # Run as module so that package-relative imports always work
-CMD ["python", "-m", "file_sync.main"]
+CMD [".venv/bin/python", "-m", "file_sync.main"]
