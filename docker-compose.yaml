@@ -1,0 +1,60 @@
+# docker-compose.yaml
+version: '3.8'
+
+services:
+  # 1. Simplified PostgreSQL Service
+  postgres:
+    image: konakore_postgre_postgres:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    environment:
+      - POSTGRES_USER=konakore
+      - POSTGRES_PASSWORD=secret
+      - POSTGRES_DB=konakore
+    volumes:
+      # Bind mount to a specific host path for persistent data
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - '5432:5432'
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U konakore -d konakore"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. New Python API Service (replaces PostgREST)
+  api:
+    image: konakore_postgre_api:latest
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - '3000:3000'
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+
+  # 3. New Python Scheduler Service (replaces pg_cron)
+  scheduler:
+    image: konakore_postgre_scheduler:latest
+    build:
+      context: .
+      dockerfile: scheduler/Dockerfile
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - PYTHONUNBUFFERED=1
+volumes:
+  postgres_data:
