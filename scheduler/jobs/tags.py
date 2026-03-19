@@ -126,10 +126,3 @@ def register_tags_sync_job(run_initial_sync=False):
         
         print("[Tags] Running initial sync...")
         task_sync_all_tags()
-
-
-# 为了兼容性，保留旧的函数名但重新实现
-def run_tag_sync_process():
-    """立即执行一次全量tags同步"""
-    print("[Tags] Running immediate full tags sync...")
-    task_sync_all_tags()
