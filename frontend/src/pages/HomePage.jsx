@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import PhotoSwipeLightbox from 'photoswipe/lightbox';
 import 'photoswipe/style.css';
-import PhotoSwipeFullscreen from 'photoswipe-fullscreen';
+import PhotoSwipeFullscreen from '../utils/photoswipe-fullscreen.esm';
 
 import SearchBar from '../components/SearchBar';
 import MasonryGrid from '../components/MasonryGrid';
@@ -17,6 +17,7 @@ import { useTag } from '../contexts/TagContext';
 import { tagManager } from '../utils/TagManager';
 import { Box, CircularProgress, Typography, Chip } from '@mui/material';
 import { Link as LinkIcon, AspectRatio as SizeIcon, Star as ScoreIcon, DateRange as DateIcon, Storage as FileIcon, Favorite as FavoriteIcon } from '@mui/icons-material';
+import ExcludedTagsModal from '../components/ExcludedTagsModal';
 
 const HomePage = () => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -27,9 +28,11 @@ const HomePage = () => {
   const [showLikedArtistsOnly, setShowLikedArtistsOnly] = useState(false);
   const [postsLikeState, setPostsLikeState] = useState({}); // 本地收藏状态缓存
   const lightboxRef = useRef(null); // 用于存储PhotoSwipe实例
-  
+  const slideshowRef = useRef({ interval: null, isPlaying: false }); // 幻灯片播放状态
+  const [excludedTagsOpen, setExcludedTagsOpen] = useState(false);
+
   const queryClient = useQueryClient();
-  
+
   // 使用新的 useTag Hook
   const {
     fetchTagInfo,
@@ -98,23 +101,23 @@ const HomePage = () => {
     setSearchQuery(query);
     setCurrentPage(1); // 重置到第一页
     setSortOption('id'); // 搜索时重置排序为id desc
-    
+
     // 如果搜索标签，自动关闭"仅收藏画师"开关
     if (query && showLikedArtistsOnly) {
       setShowLikedArtistsOnly(false);
     }
   };
-  
+
   const clearSearch = () => {
     setSearchQuery('');
     setCurrentPage(1); // 重置到第一页
   };
-  
+
   const handleTagClick = (tag) => {
     setSearchQuery(tag);
     setCurrentPage(1); // 重置到第一页
     setSortOption('id'); // 搜索时重置排序为id desc
-    
+
     // 点击标签搜索时，自动关闭"仅收藏画师"开关
     if (showLikedArtistsOnly) {
       setShowLikedArtistsOnly(false);
@@ -158,6 +161,7 @@ const HomePage = () => {
   const onImageClick = (index) => {
     // 使用PhotoSwipe API直接打开指定索引的图片
     if (window.currentLightbox) {
+      // PhotoSwipeLightbox 实例方法：loadAndOpen(index, dataSource?)
       window.currentLightbox.loadAndOpen(index);
     } else {
       console.log('PhotoSwipe lightbox not ready');
@@ -187,6 +191,13 @@ const HomePage = () => {
     totalPosts = postsData?.pagination?.total_items || 0;
   }
 
+  // 当前页过滤统计（基于过滤规则与当前页 posts）
+  const excludedCountOnPage = useMemo(() => {
+    if (!posts?.length) return 0;
+    // 统计应被排除的数量（以当前页原始 posts 为准）
+    return posts.reduce((acc, post) => acc + (tagManager.shouldExcludePost(post) ? 1 : 0), 0);
+  }, [posts]);
+
   // --- MEMOIZED DATA FOR RENDERING ---
   const postsForGrid = useMemo(() => {
     if (!posts.length) return posts;
@@ -194,55 +205,55 @@ const HomePage = () => {
     // 合并本地收藏状态到posts数据
     const postsWithUpdatedLikes = posts.map(post => ({
       ...post,
-      liked: postsLikeState.hasOwnProperty(post.id) 
-        ? postsLikeState[post.id] 
+      liked: postsLikeState.hasOwnProperty(post.id)
+        ? postsLikeState[post.id]
         : post.liked
     }));
 
     // 排序逻辑
     let sortedPosts;
-    
+
     if (sortOption === 'relevance') {
       // TF-IDF混合排序：使用新的TF-IDF算法
       sortedPosts = tagManager.sortPostsByTfIdfHybrid(postsWithUpdatedLikes, 'desc', totalPosts);
     } else {
-      // 其他排序方式：使用通用置底标签后置排序
-      sortedPosts = tagManager.sortPostsWithBottomPriorityLast(postsWithUpdatedLikes, (a, b) => {
+      // 其他排序方式：先应用排除标签过滤，再按选项排序
+      sortedPosts = tagManager.sortPosts(postsWithUpdatedLikes, (a, b) => {
         switch (sortOption) {
           case 'score':
             return (b.data.score || 0) - (a.data.score || 0);
-          
+
           case 'id':
             return (b.id || 0) - (a.id || 0);
-          
+
           case 'file_size':
             return (b.data.file_size || 0) - (a.data.file_size || 0);
-          
+
           case 'resolution':
             // 按分辨率（像素总数）从大到小排序
             const aPixels = (a.data.width || 0) * (a.data.height || 0);
             const bPixels = (b.data.width || 0) * (b.data.height || 0);
             return bPixels - aPixels;
-          
+
           case 'waifu_pillow':
             // waifu_pillow: 宽高比 > 2 的图片靠前 (width > height * 2)
             const aRatio = (a.data.width || 0) / (a.data.height || 1);
             const bRatio = (b.data.width || 0) / (b.data.height || 1);
             const aIsWaifu = aRatio > 2 ? 1 : 0;
             const bIsWaifu = bRatio > 2 ? 1 : 0;
-            
+
             if (aIsWaifu !== bIsWaifu) {
               return bIsWaifu - aIsWaifu; // waifu图片靠前
             }
             // 如果都是或都不是waifu，按宽高比降序
             return bRatio - aRatio;
-          
+
           case 'shuffle':
             // 随机排序 - 使用post id作为seed保证相同数据的排序一致性
             const seedA = (a.id || 0) * 9301 + 49297;
             const seedB = (b.id || 0) * 9301 + 49297;
             return (seedA % 233280) - (seedB % 233280);
-          
+
           default:
             return 0;
         }
@@ -255,14 +266,14 @@ const HomePage = () => {
   // 提取当前页面所有tags并更新缓存
   const currentPageTags = useMemo(() => {
     if (!postsForGrid?.length) return [];
-    
+
     const result = extractTagsFromPosts(postsForGrid);
-    
+
     // 添加到全局缓存
     if (result.length > 0) {
       addTagsToCache(result);
     }
-    
+
     return result;
   }, [postsForGrid, extractTagsFromPosts, addTagsToCache]);
 
@@ -274,11 +285,8 @@ const HomePage = () => {
   // --- PHOTOSWIPE SETUP ---
   // 仅在组件挂载时初始化PhotoSwipe
   useEffect(() => {
-    // 幻灯片播放相关状态 - 使用 ref 来持久化状态
-    const slideshowState = {
-      interval: null,
-      isPlaying: false
-    };
+    // 使用 ref 来持久化幻灯片播放状态，避免闭包问题
+    const slideshowState = slideshowRef.current;
     const SLIDESHOW_DELAY = 3000; // 3秒切换间隔
 
     const lightbox = new PhotoSwipeLightbox({
@@ -288,15 +296,22 @@ const HomePage = () => {
       dataSource: [], // 初始为空，后续动态更新
     });
 
+    // 初始化全屏插件
     new PhotoSwipeFullscreen(lightbox);
 
     // 幻灯片播放功能
     const startSlideshow = (pswp) => {
+      // 先清理可能存在的旧定时器
+      if (slideshowState.interval) {
+        clearInterval(slideshowState.interval);
+        slideshowState.interval = null;
+      }
+
       if (slideshowState.isPlaying) return;
-      
+
       slideshowState.isPlaying = true;
       updateSlideshowButton(pswp, true);
-      
+
       slideshowState.interval = setInterval(() => {
         const numItems = pswp.getNumItems();
         if (pswp.currIndex === numItems - 1) {
@@ -313,10 +328,10 @@ const HomePage = () => {
 
     const stopSlideshow = (pswp) => {
       if (!slideshowState.isPlaying) return;
-      
+
       slideshowState.isPlaying = false;
       updateSlideshowButton(pswp, false);
-      
+
       if (slideshowState.interval) {
         clearInterval(slideshowState.interval);
         slideshowState.interval = null;
@@ -336,7 +351,7 @@ const HomePage = () => {
       if (button) {
         button.classList.toggle('pswp__button--playing', playing);
         button.setAttribute('aria-pressed', playing ? 'true' : 'false');
-        
+
         // 更新 SVG 图标而不破坏事件监听器
         const svg = button.querySelector('svg');
         if (svg) {
@@ -444,11 +459,13 @@ const HomePage = () => {
     window.currentLightbox = lightbox; // 保持对window的引用
 
     return () => {
-      // 清理幻灯片定时器
-      if (slideshowState.interval) {
-        clearInterval(slideshowState.interval);
+      // 清理幻灯片定时器（使用 ref 确保清理正确的定时器）
+      if (slideshowRef.current.interval) {
+        clearInterval(slideshowRef.current.interval);
+        slideshowRef.current.interval = null;
+        slideshowRef.current.isPlaying = false;
       }
-      
+
       if (lightboxRef.current) {
         lightboxRef.current.destroy();
         lightboxRef.current = null;
@@ -495,13 +512,13 @@ const HomePage = () => {
           onLikedArtistsFilterChange={handleLikedArtistsFilterChange}
         />
         {isLoading ? (
-          <Box sx={{ 
-            display: 'flex', 
-            justifyContent: 'center', 
-            alignItems: 'center', 
+          <Box sx={{
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
             minHeight: '400px',
             flexDirection: 'column',
-            gap: 2 
+            gap: 2
           }}>
             <CircularProgress size={60} />
             <Typography variant="body1" color="text.secondary">
@@ -528,9 +545,14 @@ const HomePage = () => {
   };
 
   return (
-    <AppLayout>
-      <SearchBar 
-        onSearch={handleSearch} 
+    <AppLayout onOpenSettings={() => setExcludedTagsOpen(true)}>
+      <ExcludedTagsModal
+        open={excludedTagsOpen}
+        onClose={() => setExcludedTagsOpen(false)}
+        excludedCountOnPage={excludedCountOnPage}
+      />
+      <SearchBar
+        onSearch={handleSearch}
         searchQuery={searchQuery}
         onClearSearch={clearSearch}
         totalPosts={totalPosts}
@@ -538,7 +560,7 @@ const HomePage = () => {
         showLikedOnly={showLikedOnly}
       />
 
-      <Box sx={{ 
+      <Box sx={{
         mx: 'auto',
         maxWidth: '100%',
         minWidth: '100%', // 确保最小宽度
@@ -552,16 +574,16 @@ const HomePage = () => {
       }}>
         {renderContent()}
       </Box>
-      
+
       {/* Hidden caption content for each image */}
       {postsForGrid.map((post, index) => (
-        <div 
+        <div
           key={`caption-${post.id}`}
-          data-caption-id={post.id} 
-          className="hidden-caption-content" 
+          data-caption-id={post.id}
+          className="hidden-caption-content"
           style={{ display: 'none' }}
         >
-          <div style={{ 
+          <div style={{
             padding: '16px',
             background: 'rgba(0, 0, 0, 0.8)',
             backdropFilter: 'blur(15px)',
@@ -614,7 +636,7 @@ const HomePage = () => {
                 );
               })}
             </div>
-            
+
             {/* Info section */}
             <div style={{
               display: 'flex',
@@ -627,7 +649,7 @@ const HomePage = () => {
               <Chip
                 icon={<LinkIcon sx={{ color: '#fff !important' }} />}
                 label={
-                  <a 
+                  <a
                     href={`https://konachan.com/post/show/${post.id}`}
                     target="_blank"
                     rel="noopener noreferrer"
@@ -660,8 +682,8 @@ const HomePage = () => {
               {/* File Size */}
               <Chip
                 icon={<FileIcon sx={{ color: '#fff !important' }} />}
-                label={post.data.jpeg_file_size === 0 ? 
-                  formatFileSize(post.data.file_size) : 
+                label={post.data.jpeg_file_size === 0 ?
+                  formatFileSize(post.data.file_size) :
                   `${formatFileSize(post.data.jpeg_file_size)} / ${formatFileSize(post.data.file_size)}`
                 }
                 size="small"

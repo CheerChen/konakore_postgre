@@ -36,11 +36,14 @@ export const TAGME_EXCLUDE_TAGS = [
   'tagme_(character)',         // 角色未知标签
 ];
 
-// 需要在排序中置底的标签列表 - 这些标签的posts会被排到最后
-export const BOTTOM_PRIORITY_TAGS = [
-  'no_humans',                 // 无人物
-  'otoko_no_ko',                 // 男孩子
+// 排除标签设置：包含这些标签的 post 会被直接过滤掉
+// 该配置可在 UI（Modal）中编辑，并持久化到 localStorage
+export const DEFAULT_EXCLUDED_POST_TAGS = [
+  // 示例：
+  // 'no_humans',
 ];
+
+const EXCLUDED_POST_TAGS_STORAGE_KEY = 'konakore_excluded_post_tags_config';
 
 // 检查是否为需要排除的tagme类型标签
 export const isTagmeTag = (tagName) => {
@@ -48,13 +51,13 @@ export const isTagmeTag = (tagName) => {
   if (TAGME_EXCLUDE_TAGS.includes(tagName)) {
     return true;
   }
-  
+
   // 模糊匹配其他tagme变体（以tagme开头或包含tagme_的异常标签）
   // if (tagName.startsWith('tagme_') || tagName.startsWith('tagme(') || 
   //     tagName.includes('tagme_') || tagName.endsWith('tagme')) {
   //   return true;
   // }
-  
+
   return false;
 };
 
@@ -117,14 +120,93 @@ class TagManager {
       preferencesLastFetch: null,         // 上次获取偏好数据的时间（已废弃，保留兼容）
       isFetchingLikedPosts: false,        // 防止重复请求liked posts
       isFetchingTranslations: false,      // 防止重复请求翻译文件
+
+      excludedPostTagsConfig: {
+        enabled: false,
+        tags: [...DEFAULT_EXCLUDED_POST_TAGS]
+      },
     };
-    
+
     // 事件监听器
     this.listeners = new Set();
+
+    // 尝试从 localStorage 恢复排除标签配置
+    this.loadExcludedPostTagsConfigFromStorage();
+  }
+
+  // ===== 排除标签设置（localStorage） =====
+
+  loadExcludedPostTagsConfigFromStorage() {
+    try {
+      const raw = localStorage.getItem(EXCLUDED_POST_TAGS_STORAGE_KEY);
+      if (!raw) return;
+
+      const parsed = JSON.parse(raw);
+      const enabled = Boolean(parsed?.enabled);
+      const tags = Array.isArray(parsed?.tags)
+        ? parsed.tags.filter(t => typeof t === 'string' && t.trim().length > 0).map(t => t.trim())
+        : [...DEFAULT_EXCLUDED_POST_TAGS];
+
+      this.state.excludedPostTagsConfig = { enabled, tags };
+      this.notify({ type: 'excluded-tags-config-loaded', data: this.state.excludedPostTagsConfig });
+    } catch (error) {
+      console.warn('Failed to load excluded post tags config from localStorage:', error);
+    }
+  }
+
+  saveExcludedPostTagsConfigToStorage() {
+    try {
+      localStorage.setItem(
+        EXCLUDED_POST_TAGS_STORAGE_KEY,
+        JSON.stringify(this.state.excludedPostTagsConfig)
+      );
+    } catch (error) {
+      console.warn('Failed to save excluded post tags config to localStorage:', error);
+    }
+  }
+
+  getExcludedPostTagsConfig() {
+    return this.state.excludedPostTagsConfig;
+  }
+
+  setExcludedPostTagsConfig(nextConfig) {
+    const enabled = Boolean(nextConfig?.enabled);
+    const tags = Array.isArray(nextConfig?.tags)
+      ? nextConfig.tags.filter(t => typeof t === 'string' && t.trim().length > 0).map(t => t.trim())
+      : [];
+
+    this.state.excludedPostTagsConfig = { enabled, tags };
+    this.saveExcludedPostTagsConfigToStorage();
+    this.notify({ type: 'excluded-tags-config-updated', data: this.state.excludedPostTagsConfig });
+  }
+
+  // ===== Post 过滤 =====
+
+  getPostTagsString(post) {
+    if (post?.raw_data?.tags && typeof post.raw_data.tags === 'string') return post.raw_data.tags;
+    if (post?.data?.tags && typeof post.data.tags === 'string') return post.data.tags;
+    if (typeof post?.tags === 'string') return post.tags;
+    return null;
+  }
+
+  shouldExcludePost(post) {
+    const { enabled, tags: excludedTags } = this.state.excludedPostTagsConfig || {};
+    if (!enabled || !Array.isArray(excludedTags) || excludedTags.length === 0) return false;
+
+    const tagsString = this.getPostTagsString(post);
+    if (!tagsString) return false;
+
+    const postTags = tagsString.split(' ').filter(Boolean);
+    return excludedTags.some(tag => postTags.includes(tag));
+  }
+
+  filterPosts(posts) {
+    if (!Array.isArray(posts) || posts.length === 0) return posts;
+    return posts.filter(post => !this.shouldExcludePost(post));
   }
 
   // ===== 事件系统 =====
-  
+
   /**
    * 订阅状态变化
    */
@@ -205,7 +287,7 @@ class TagManager {
     this.state.tags.clear();
     this.state.tagInfo.clear();
     this.state.translations = null;
-    
+
     try {
       localStorage.removeItem('konakore_tags_cache');
       localStorage.removeItem('konakore_tag_info_cache');
@@ -224,7 +306,7 @@ class TagManager {
   async fetchTagInfo(page = 1, limit = 100, liked = null) {
     try {
       const tagsData = await getTags(page, limit, liked);
-      
+
       if (Array.isArray(tagsData)) {
         tagsData.forEach(tag => {
           if (tag.name) {
@@ -236,19 +318,19 @@ class TagManager {
             this.state.tags.add(tag.name);
           }
         });
-        
+
         // 保存到localStorage
         this.saveToStorage();
-        
-        this.notify({ 
-          type: 'tag-info-updated', 
-          data: { 
-            tagInfo: this.state.tagInfo, 
+
+        this.notify({
+          type: 'tag-info-updated',
+          data: {
+            tagInfo: this.state.tagInfo,
             tags: this.state.tags,
-            newCount: tagsData.length 
-          } 
+            newCount: tagsData.length
+          }
         });
-        
+
         return tagsData.length;
       }
     } catch (error) {
@@ -292,31 +374,31 @@ class TagManager {
       // 检查是否需要刷新数据（缓存30分钟）
       const now = Date.now();
       const cacheTime = 30 * 60 * 1000; // 30分钟
-      
-      if (!forceRefresh && 
-          this.state.likedPosts && 
-          this.state.likedPostsLastFetch && 
-          (now - this.state.likedPostsLastFetch) < cacheTime) {
+
+      if (!forceRefresh &&
+        this.state.likedPosts &&
+        this.state.likedPostsLastFetch &&
+        (now - this.state.likedPostsLastFetch) < cacheTime) {
         return this.state.likedPosts;
       }
 
       this.state.isFetchingLikedPosts = true; // 设置状态锁
 
       const response = await getLikedPosts(1, 3000, 'tags,score,rating');
-      
+
       this.state.likedPosts = response.posts;
       this.state.likedPostsLastFetch = now;
-      
-      this.notify({ 
-        type: 'liked-posts-updated', 
-        data: { 
+
+      this.notify({
+        type: 'liked-posts-updated',
+        data: {
           count: response.posts.length,
           total: response.pagination.total_items
-        } 
+        }
       });
-      
+
       console.log(`✅ Loaded ${response.posts.length} liked posts for TF-IDF learning`);
-      
+
       return this.state.likedPosts;
     } catch (error) {
       console.warn('Failed to fetch liked posts:', error);
@@ -362,19 +444,19 @@ class TagManager {
 
     // 构建TF-IDF映射
     const tfIdfMap = new Map();
-    
+
     tf1.forEach((count, tag) => {
       const tagInfo = this.state.tagInfo.get(tag);
       if (!tagInfo) return;
 
       const tagCount = tagInfo.count || 1;
       const tagType = tagInfo.type || 0;
-      
+
       // 计算TF-IDF
       const tf = tf1.get(tag) / tf2.get(tag);
       const idf = Math.log(totalPosts / (tagCount + 1));
       const typeWeight = TFIDF_HYBRID_CONFIG.typeWeights[tagType] || 1.0;
-      
+
       const tfIdfScore = tf * idf * typeWeight;
       tfIdfMap.set(tag, tfIdfScore);
     });
@@ -391,7 +473,7 @@ class TagManager {
   calculateTfIdfHybridScore(post, tfIdfWeights) {
     const scores = {
       profile: 0,
-      quality: 0, 
+      quality: 0,
       curation: 0,
       final: 0
     };
@@ -424,19 +506,6 @@ class TagManager {
   }
 
   /**
-   * 检查post是否包含任何置底优先级的标签
-   * @param {Object} post - post对象
-   * @returns {boolean} 是否包含置底标签
-   */
-  hasBottomPriorityTag(post) {
-    if (post.raw_data?.tags && typeof post.raw_data.tags === 'string') {
-      const postTags = post.raw_data.tags.split(' ').filter(Boolean);
-      return BOTTOM_PRIORITY_TAGS.some(tag => postTags.includes(tag));
-    }
-    return false;
-  }
-
-  /**
    * 使用TF-IDF混合算法对posts数组排序
    * @param {Array} posts - posts数组
    * @param {string} order - 排序方向 'desc' | 'asc'
@@ -445,7 +514,11 @@ class TagManager {
    */
   sortPostsByTfIdfHybrid(posts, order = 'desc', totalPosts = 400000) {
     if (!posts?.length) return posts;
-    
+
+    // 先过滤掉被排除标签命中的 posts
+    const filteredPosts = this.filterPosts(posts);
+    if (!filteredPosts?.length) return filteredPosts;
+
     // 确保有liked posts数据
     if (!this.state.likedPosts) {
       console.warn('No liked posts loaded for TF-IDF hybrid sorting');
@@ -461,53 +534,46 @@ class TagManager {
 
     // 学习TF-IDF模型
     const tfIdfWeights = this.learnTfIdf(likedPosts, totalPosts);
-    
+
     // 第一遍：计算原始分数并找到最大值
     const rawScores = [];
     let maxProfile = 0, maxQuality = 0, maxCuration = 0;
 
-    posts.forEach((post, index) => {
+    filteredPosts.forEach((post, index) => {
       const scores = this.calculateTfIdfHybridScore(post, tfIdfWeights);
       rawScores[index] = scores;
-      
+
       maxProfile = Math.max(maxProfile, scores.profile);
       maxQuality = Math.max(maxQuality, scores.quality);
       maxCuration = Math.max(maxCuration, scores.curation);
     });
 
     // 第二遍：归一化并计算最终分数
-    const postsWithScores = posts.map((post, index) => {
+    const postsWithScores = filteredPosts.map((post, index) => {
       const raw = rawScores[index];
-      
+
       const normProfile = maxProfile > 0 ? raw.profile / maxProfile : 0;
-      const normQuality = maxQuality > 0 ? raw.quality / maxQuality : 0; 
+      const normQuality = maxQuality > 0 ? raw.quality / maxQuality : 0;
       const normCuration = maxCuration > 0 ? raw.curation / maxCuration : 0;
-      
+
       const finalScore = TFIDF_HYBRID_CONFIG.profileWeight * normProfile +
-                        TFIDF_HYBRID_CONFIG.qualityWeight * normQuality +
-                        TFIDF_HYBRID_CONFIG.curationWeight * normCuration;
-      
+        TFIDF_HYBRID_CONFIG.qualityWeight * normQuality +
+        TFIDF_HYBRID_CONFIG.curationWeight * normCuration;
+
       // 存储详细分数用于调试
       if (!post.alg) post.alg = {};
       post.alg.profile_score = normProfile;
       post.alg.quality_score = normQuality;
       post.alg.curation_score = normCuration;
-      
+
       return {
         ...post,
-        myScore: finalScore,
-        hasBottomPriority: this.hasBottomPriorityTag(post)
+        myScore: finalScore
       };
     });
 
-    // 排序：先按置底标签分组，再按最终分数排序
+    // 排序：按最终分数排序
     postsWithScores.sort((a, b) => {
-      // 优先级1: 置底标签的posts永远排在后面
-      if (a.hasBottomPriority !== b.hasBottomPriority) {
-        return a.hasBottomPriority - b.hasBottomPriority;
-      }
-      
-      // 优先级2: 在相同置底状态下，按最终分数排序
       if (order === 'asc') {
         return a.myScore - b.myScore;
       } else {
@@ -524,38 +590,17 @@ class TagManager {
         profile: p.alg?.profile_score,
         quality: p.alg?.quality_score,
         curation: p.alg?.curation_score,
-        hasBottomPriority: p.hasBottomPriority
       })));
     }
 
     return postsWithScores;
   }
 
-  /**
-   * 通用排序方法，让置底标签的posts在所有排序中都后置
-   * @param {Array} posts - posts数组
-   * @param {Function} compareFn - 比较函数
-   * @returns {Array} 排序后的posts数组
-   */
-  sortPostsWithBottomPriorityLast(posts, compareFn) {
+  sortPosts(posts, compareFn) {
     if (!posts?.length) return posts;
-
-    // 为每个post添加置底标签标记
-    const postsWithFlags = posts.map(post => ({
-      ...post,
-      hasBottomPriority: this.hasBottomPriorityTag(post)
-    }));
-
-    // 排序：先按置底标签分组，再按自定义规则排序
-    return postsWithFlags.sort((a, b) => {
-      // 优先级1: 置底标签的posts永远排在后面
-      if (a.hasBottomPriority !== b.hasBottomPriority) {
-        return a.hasBottomPriority - b.hasBottomPriority;
-      }
-      
-      // 优先级2: 在相同置底状态下，使用自定义比较函数
-      return compareFn(a, b);
-    });
+    const filteredPosts = this.filterPosts(posts);
+    if (!filteredPosts?.length) return filteredPosts;
+    return filteredPosts.sort(compareFn);
   }
 
   /**
@@ -588,12 +633,12 @@ class TagManager {
    */
   extractTagsFromPosts(posts) {
     if (!posts?.length) return [];
-    
+
     const tagSet = new Set();
     posts.forEach(post => {
       // 检查两种可能的tags格式
       let tags = [];
-      
+
       // 格式1: post.tags (数组)
       if (post.tags && Array.isArray(post.tags)) {
         tags = post.tags;
@@ -602,7 +647,7 @@ class TagManager {
       else if (post.data?.tags && typeof post.data.tags === 'string') {
         tags = post.data.tags.split(' ').filter(Boolean);
       }
-      
+
       // 添加到Set中去重
       tags.forEach(tag => {
         if (tag && typeof tag === 'string' && tag.trim().length > 0) {
@@ -610,7 +655,7 @@ class TagManager {
         }
       });
     });
-    
+
     // 转换为数组并过滤空值
     return Array.from(tagSet).filter(tag => tag && tag.length > 0);
   }
@@ -620,16 +665,16 @@ class TagManager {
    */
   mergeTagsWithCache(currentTags) {
     const cachedTags = this.getCachedTags();
-    
+
     // 合并并去重：缓存的tags在前，当前页面新的tags在后
     const tagSet = new Set();
-    
+
     // 先添加缓存中的tags
     cachedTags.forEach(tag => tagSet.add(tag));
-    
+
     // 再添加当前页面的tags（如果不在缓存中）
     currentTags.forEach(tag => tagSet.add(tag));
-    
+
     // 转换为数组并排序
     return Array.from(tagSet).sort();
   }
@@ -672,7 +717,7 @@ class TagManager {
           console.warn('Fetch translations already in progress.');
           return;
         }
-        
+
         this.state.isFetchingTranslations = true; // 设置状态锁
         try {
           const response = await fetch("https://cdn.jsdelivr.net/gh/asadahimeka/yandere-masonry@main/src/data/all_tags_cn.min.json");
@@ -696,10 +741,10 @@ class TagManager {
 
       // 翻译 PhotoSwipe 弹窗中的标签（使用 data-tag 属性精确定位）
       this.setTagText('[data-tag]', textEn);
-      
+
       // 翻译普通的标签 Chip 组件（只翻译带有 data-tag 属性的 Chip）
       this.setTagText('[data-tag] .MuiChip-label', textEn);
-      
+
       // 翻译 PhotoSwipe 弹窗中标签区域的 Chip（通过父容器限制范围）
       this.setTagText('.hidden-caption-content [data-tag] .MuiChip-label', textEn);
 
@@ -718,7 +763,7 @@ class TagManager {
     if (!this.state.translations) {
       return tagName;
     }
-    
+
     const en = tagName.replace(/\s+/g, "_");
     const cn = this.state.translations[en];
     return cn ? `${en} [${cn}]` : tagName;
@@ -731,7 +776,7 @@ class TagManager {
     if (!this.state.translations) {
       return null;
     }
-    
+
     const en = tagName.replace(/\s+/g, "_");
     return this.state.translations[en] || null;
   }
@@ -743,7 +788,7 @@ class TagManager {
     try {
       // 预加载翻译数据
       await this.translateElements();
-      
+
       // 设置定期检查和更新标签翻译
       if (this.state.translationObserver) {
         this.state.translationObserver.disconnect();
@@ -757,8 +802,8 @@ class TagManager {
             mutation.addedNodes.forEach((node) => {
               if (node.nodeType === Node.ELEMENT_NODE) {
                 // 更精确地检查标签元素：只检查带有 data-tag 属性的元素或搜索选项
-                const hasTagElements = node.querySelector?.('[data-tag], [role="option"]') || 
-                                     node.matches?.('[data-tag], [role="option"]');
+                const hasTagElements = node.querySelector?.('[data-tag], [role="option"]') ||
+                  node.matches?.('[data-tag], [role="option"]');
                 if (hasTagElements) {
                   shouldTranslate = true;
                 }
@@ -766,7 +811,7 @@ class TagManager {
             });
           }
         });
-        
+
         if (shouldTranslate) {
           // 延迟执行翻译，避免频繁调用
           setTimeout(() => this.translateElements(), 100);
@@ -780,9 +825,9 @@ class TagManager {
       });
 
       this.state.translationObserver = observer;
-      
+
       this.notify({ type: 'translation-initialized' });
-      
+
       return observer;
     } catch (error) {
       console.warn('Failed to initialize tag translation:', error);

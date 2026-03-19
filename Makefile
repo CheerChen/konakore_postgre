@@ -1,5 +1,9 @@
 # Makefile for managing the development and deployment lifecycle
 
+# Load local overrides if exists (not tracked by git)
+# Copy Makefile.local.example to Makefile.local and fill in your values
+-include Makefile.local
+
 # --- Variables ---
 # Your private registry URL. Can be overridden e.g., `make push REGISTRY_URL=my.registry.com`
 REGISTRY_URL ?= 192.168.0.110:5000
@@ -122,6 +126,85 @@ release: tag push
 	@echo "--> Release for api, scheduler, file_sync, and frontend images is complete."
 
 
+# --- Portainer Remote Deployment ---
+.PHONY: portainer-redeploy portainer-redeploy-service
+
+# Portainer configuration (can be overridden via environment or command line)
+PORTAINER_URL ?= http://192.168.0.110:9000
+PORTAINER_API_KEY ?= 
+PORTAINER_STACK_NAME ?= 
+PORTAINER_ENDPOINT_ID ?= 2
+
+# Redeploy entire stack in Portainer (re-pull images and redeploy)
+# Usage: make portainer-redeploy PORTAINER_API_KEY=your_api_key PORTAINER_STACK_NAME=your_stack
+portainer-redeploy:
+	@echo "--> Redeploying stack '$(PORTAINER_STACK_NAME)' in Portainer..."
+	@if [ -z "$(PORTAINER_API_KEY)" ]; then \
+		echo "Error: PORTAINER_API_KEY is required. Set it via environment or command line."; \
+		exit 1; \
+	fi
+	@if [ -z "$(PORTAINER_STACK_NAME)" ]; then \
+		echo "Error: PORTAINER_STACK_NAME is required. Usage: make portainer-redeploy PORTAINER_STACK_NAME=your_stack"; \
+		exit 1; \
+	fi
+	@STACK_ID=$$(curl -s -X GET \
+		"$(PORTAINER_URL)/api/stacks" \
+		-H "X-API-Key: $(PORTAINER_API_KEY)" \
+		| jq -r '.[] | select(.Name=="$(PORTAINER_STACK_NAME)") | .Id'); \
+	if [ -z "$$STACK_ID" ] || [ "$$STACK_ID" = "null" ]; then \
+		echo "Error: Stack '$(PORTAINER_STACK_NAME)' not found."; \
+		exit 1; \
+	fi; \
+	echo "Found stack ID: $$STACK_ID"; \
+	STACK_FILE=$$(curl -s -X GET \
+		"$(PORTAINER_URL)/api/stacks/$$STACK_ID/file" \
+		-H "X-API-Key: $(PORTAINER_API_KEY)" \
+		| jq -r '.StackFileContent'); \
+	curl -s -X PUT \
+		"$(PORTAINER_URL)/api/stacks/$$STACK_ID?endpointId=$(PORTAINER_ENDPOINT_ID)" \
+		-H "X-API-Key: $(PORTAINER_API_KEY)" \
+		-H "Content-Type: application/json" \
+		-d "$$(jq -n --arg content "$$STACK_FILE" '{stackFileContent: $$content, prune: true, pullImage: true}')" \
+		| jq .; \
+	echo "--> Stack redeployed successfully."
+
+# Remove and recreate a specific service/container in Portainer stack
+# Usage: make portainer-redeploy-service PORTAINER_API_KEY=your_api_key PORTAINER_STACK_NAME=your_stack SERVICE=frontend
+portainer-redeploy-service:
+	@echo "--> Redeploying service '$(SERVICE)' in stack '$(PORTAINER_STACK_NAME)'..."
+	@if [ -z "$(PORTAINER_API_KEY)" ]; then \
+		echo "Error: PORTAINER_API_KEY is required."; \
+		exit 1; \
+	fi
+	@if [ -z "$(PORTAINER_STACK_NAME)" ]; then \
+		echo "Error: PORTAINER_STACK_NAME is required."; \
+		exit 1; \
+	fi
+	@if [ -z "$(SERVICE)" ]; then \
+		echo "Error: SERVICE is required. Usage: make portainer-redeploy-service SERVICE=frontend"; \
+		exit 1; \
+	fi
+	@CONTAINER_NAME="$(PORTAINER_STACK_NAME)-$(SERVICE)-1"; \
+	echo "Looking for container: $$CONTAINER_NAME"; \
+	CONTAINER_ID=$$(curl -s -X GET \
+		"$(PORTAINER_URL)/api/endpoints/$(PORTAINER_ENDPOINT_ID)/docker/containers/json?all=true" \
+		-H "X-API-Key: $(PORTAINER_API_KEY)" \
+		| jq -r ".[] | select(.Names[] | contains(\"$$CONTAINER_NAME\")) | .Id"); \
+	if [ -n "$$CONTAINER_ID" ] && [ "$$CONTAINER_ID" != "null" ]; then \
+		echo "Stopping container $$CONTAINER_ID..."; \
+		curl -s -X POST \
+			"$(PORTAINER_URL)/api/endpoints/$(PORTAINER_ENDPOINT_ID)/docker/containers/$$CONTAINER_ID/stop" \
+			-H "X-API-Key: $(PORTAINER_API_KEY)" || true; \
+		echo "Removing container $$CONTAINER_ID..."; \
+		curl -s -X DELETE \
+			"$(PORTAINER_URL)/api/endpoints/$(PORTAINER_ENDPOINT_ID)/docker/containers/$$CONTAINER_ID?force=true" \
+			-H "X-API-Key: $(PORTAINER_API_KEY)"; \
+	else \
+		echo "Container not found, proceeding with stack redeploy..."; \
+	fi
+	@$(MAKE) portainer-redeploy PORTAINER_API_KEY=$(PORTAINER_API_KEY)
+
+
 # --- Help ---
 .PHONY: help
 
@@ -147,3 +230,15 @@ help:
 	@echo "  tag            Tag the api, scheduler, file_sync, and frontend images for the registry"
 	@echo "  push           Push the tagged images to the registry"
 	@echo "  release        Build, tag, and push all custom images"
+	@echo ""
+	@echo "Portainer Remote Deployment:"
+	@echo "  portainer-redeploy          Redeploy entire stack (re-pull images)"
+	@echo "                              Usage: make portainer-redeploy PORTAINER_STACK_NAME=xxx PORTAINER_API_KEY=xxx"
+	@echo "  portainer-redeploy-service  Remove specific container and redeploy stack"
+	@echo "                              Usage: make portainer-redeploy-service PORTAINER_STACK_NAME=xxx SERVICE=frontend PORTAINER_API_KEY=xxx"
+	@echo ""
+	@echo "Environment Variables:"
+	@echo "  PORTAINER_URL        Portainer URL (default: http://192.168.0.110:9000)"
+	@echo "  PORTAINER_API_KEY    Portainer API key (required for portainer-* commands)"
+	@echo "  PORTAINER_STACK_NAME Stack name (required for portainer-* commands)"
+	@echo "  PORTAINER_ENDPOINT_ID Endpoint ID (default: 2)"
