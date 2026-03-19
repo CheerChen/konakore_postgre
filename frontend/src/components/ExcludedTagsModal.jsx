@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
     Autocomplete,
     Box,
@@ -8,29 +8,20 @@ import {
     DialogActions,
     DialogContent,
     DialogTitle,
-    Divider,
-    FormControlLabel,
     Stack,
-    Switch,
     TextField,
     Typography
 } from '@mui/material';
 
 import { tagManager } from '../utils/TagManager';
 
-export default function ExcludedTagsModal({ open, onClose, excludedCountOnPage = 0 }) {
-    const [enabled, setEnabled] = useState(false);
-    const [selectedTags, setSelectedTags] = useState([]);
-
+export default function ExcludedTagsModal({ open, onClose, excludedTags = [], onExcludedTagsChange, excludedCountOnPage = 0 }) {
     const [inputValue, setInputValue] = useState('');
     const [suggestions, setSuggestions] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
 
     useEffect(() => {
         if (!open) return;
-        const config = tagManager.getExcludedPostTagsConfig();
-        setEnabled(Boolean(config?.enabled));
-        setSelectedTags(Array.isArray(config?.tags) ? config.tags : []);
         setInputValue('');
         setSuggestions([]);
     }, [open]);
@@ -67,24 +58,23 @@ export default function ExcludedTagsModal({ open, onClose, excludedCountOnPage =
         return () => clearTimeout(t);
     }, [open, inputValue]);
 
-    const normalizedSelectedTags = useMemo(() => {
-        const cleaned = selectedTags
+    const normalizedTags = useMemo(() => {
+        const cleaned = excludedTags
             .map(t => (typeof t === 'string' ? t : String(t || '')).trim())
             .filter(Boolean);
         return Array.from(new Set(cleaned));
-    }, [selectedTags]);
+    }, [excludedTags]);
 
-    const handleSave = () => {
-        tagManager.setExcludedPostTagsConfig({
-            enabled,
-            tags: normalizedSelectedTags
-        });
-        onClose?.();
+    const handleTagsChange = (_, newValue) => {
+        const cleaned = newValue
+            .map(t => (typeof t === 'string' ? t : String(t || '')).trim())
+            .filter(Boolean);
+        const unique = Array.from(new Set(cleaned));
+        onExcludedTagsChange?.(unique);
     };
 
-    const handleDisable = () => {
-        setEnabled(false);
-        tagManager.setExcludedPostTagsConfig({ enabled: false, tags: normalizedSelectedTags });
+    const handleClear = () => {
+        onExcludedTagsChange?.([]);
     };
 
     return (
@@ -92,30 +82,25 @@ export default function ExcludedTagsModal({ open, onClose, excludedCountOnPage =
             <DialogTitle>排除标签（过滤 Post）</DialogTitle>
             <DialogContent>
                 <Stack spacing={2} sx={{ mt: 1 }}>
-                    <FormControlLabel
-                        control={<Switch checked={enabled} onChange={e => setEnabled(e.target.checked)} />}
-                        label="启用排除过滤"
-                    />
-
                     <Typography variant="body2" color="text.secondary">
-                        启用后：任何包含下列标签的 post 都会从列表中直接移除（包括 TF-IDF 排序与其他排序）。
+                        包含下列标签的 post 会被隐藏。添加或删除标签即时生效。
                     </Typography>
 
-                    <Typography variant="body2" color="text.secondary">
-                        当前页预计过滤：{excludedCountOnPage} 张
-                    </Typography>
-
-                    <Divider />
+                    {excludedCountOnPage > 0 && (
+                        <Typography variant="body2" color="warning.main">
+                            本页已过滤 {excludedCountOnPage} 条
+                        </Typography>
+                    )}
 
                     <Autocomplete
                         multiple
                         freeSolo
                         autoHighlight
                         openOnFocus
-                        value={normalizedSelectedTags}
+                        value={normalizedTags}
                         inputValue={inputValue}
                         onInputChange={(_, v) => setInputValue(v)}
-                        onChange={(_, newValue) => setSelectedTags(newValue)}
+                        onChange={handleTagsChange}
                         options={suggestions}
                         loading={isLoading}
                         getOptionLabel={(option) => (typeof option === 'string' ? option : String(option || ''))}
@@ -147,37 +132,18 @@ export default function ExcludedTagsModal({ open, onClose, excludedCountOnPage =
                                 {...params}
                                 label="要排除的标签"
                                 placeholder="输入标签名称（可多选）"
-                                helperText="不会实时生效，点击“保存”后应用"
                             />
                         )}
                         fullWidth
                     />
-
-                    <Box>
-                        <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                            预览（{normalizedSelectedTags.length}）
-                        </Typography>
-                        <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
-                            {normalizedSelectedTags.length === 0 ? (
-                                <Typography variant="body2" color="text.secondary">
-                                    暂无标签
-                                </Typography>
-                            ) : (
-                                normalizedSelectedTags.map(tag => <Chip key={tag} label={tag} size="small" />)
-                            )}
-                        </Stack>
-                    </Box>
                 </Stack>
             </DialogContent>
             <DialogActions>
-                <Button onClick={handleDisable} color="inherit">
-                    仅关闭
+                <Button onClick={handleClear} color="inherit" disabled={normalizedTags.length === 0}>
+                    清空
                 </Button>
-                <Button onClick={onClose} color="inherit">
-                    取消
-                </Button>
-                <Button onClick={handleSave} variant="contained">
-                    保存
+                <Button onClick={onClose} variant="contained">
+                    关闭
                 </Button>
             </DialogActions>
         </Dialog>

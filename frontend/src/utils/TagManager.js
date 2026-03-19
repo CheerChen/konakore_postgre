@@ -44,6 +44,7 @@ export const DEFAULT_EXCLUDED_POST_TAGS = [
 ];
 
 const EXCLUDED_POST_TAGS_STORAGE_KEY = 'konakore_excluded_post_tags_config';
+const RELEVANCE_FILTER_STORAGE_KEY = 'konakore_relevance_filter_config';
 
 // 检查是否为需要排除的tagme类型标签
 export const isTagmeTag = (tagName) => {
@@ -122,16 +123,20 @@ class TagManager {
       isFetchingTranslations: false,      // 防止重复请求翻译文件
 
       excludedPostTagsConfig: {
-        enabled: false,
         tags: [...DEFAULT_EXCLUDED_POST_TAGS]
+      },
+
+      relevanceFilterConfig: {
+        threshold: 0,
       },
     };
 
     // 事件监听器
     this.listeners = new Set();
 
-    // 尝试从 localStorage 恢复排除标签配置
+    // 尝试从 localStorage 恢复配置
     this.loadExcludedPostTagsConfigFromStorage();
+    this.loadRelevanceFilterConfigFromStorage();
   }
 
   // ===== 排除标签设置（localStorage） =====
@@ -142,12 +147,11 @@ class TagManager {
       if (!raw) return;
 
       const parsed = JSON.parse(raw);
-      const enabled = Boolean(parsed?.enabled);
       const tags = Array.isArray(parsed?.tags)
         ? parsed.tags.filter(t => typeof t === 'string' && t.trim().length > 0).map(t => t.trim())
         : [...DEFAULT_EXCLUDED_POST_TAGS];
 
-      this.state.excludedPostTagsConfig = { enabled, tags };
+      this.state.excludedPostTagsConfig = { tags };
       this.notify({ type: 'excluded-tags-config-loaded', data: this.state.excludedPostTagsConfig });
     } catch (error) {
       console.warn('Failed to load excluded post tags config from localStorage:', error);
@@ -170,14 +174,51 @@ class TagManager {
   }
 
   setExcludedPostTagsConfig(nextConfig) {
-    const enabled = Boolean(nextConfig?.enabled);
     const tags = Array.isArray(nextConfig?.tags)
       ? nextConfig.tags.filter(t => typeof t === 'string' && t.trim().length > 0).map(t => t.trim())
       : [];
 
-    this.state.excludedPostTagsConfig = { enabled, tags };
+    this.state.excludedPostTagsConfig = { tags };
     this.saveExcludedPostTagsConfigToStorage();
     this.notify({ type: 'excluded-tags-config-updated', data: this.state.excludedPostTagsConfig });
+  }
+
+  // ===== 相关度过滤配置（localStorage） =====
+
+  loadRelevanceFilterConfigFromStorage() {
+    try {
+      const raw = localStorage.getItem(RELEVANCE_FILTER_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      this.state.relevanceFilterConfig = {
+        threshold: Number(parsed?.threshold) || 0,
+      };
+    } catch (error) {
+      console.warn('Failed to load relevance filter config:', error);
+    }
+  }
+
+  saveRelevanceFilterConfigToStorage() {
+    try {
+      localStorage.setItem(
+        RELEVANCE_FILTER_STORAGE_KEY,
+        JSON.stringify(this.state.relevanceFilterConfig)
+      );
+    } catch (error) {
+      console.warn('Failed to save relevance filter config:', error);
+    }
+  }
+
+  getRelevanceFilterConfig() {
+    return this.state.relevanceFilterConfig;
+  }
+
+  setRelevanceFilterConfig(nextConfig) {
+    this.state.relevanceFilterConfig = {
+      threshold: Number(nextConfig?.threshold) || 0,
+    };
+    this.saveRelevanceFilterConfigToStorage();
+    this.notify({ type: 'relevance-filter-config-updated', data: this.state.relevanceFilterConfig });
   }
 
   // ===== Post 过滤 =====
@@ -190,8 +231,8 @@ class TagManager {
   }
 
   shouldExcludePost(post) {
-    const { enabled, tags: excludedTags } = this.state.excludedPostTagsConfig || {};
-    if (!enabled || !Array.isArray(excludedTags) || excludedTags.length === 0) return false;
+    const { tags: excludedTags } = this.state.excludedPostTagsConfig || {};
+    if (!Array.isArray(excludedTags) || excludedTags.length === 0) return false;
 
     const tagsString = this.getPostTagsString(post);
     if (!tagsString) return false;
@@ -409,59 +450,134 @@ class TagManager {
   }
 
   /**
-   * 学习用户偏好，构建TF-IDF模型
+   * 学习用户偏好，构建TF-IDF权重模型
+   * 使用 sublinear TF: (1 + ln(tf)) × ln(N/df) × typeWeight
    * @param {Array} likedPosts - 用户喜欢的posts（来自API）
-   * @param {number} totalPosts - 总post数量（默认40万）
-   * @returns {Map} TF-IDF权重映射
+   * @param {number} totalPosts - 总post数量
+   * @returns {Map} tag -> weight 权重映射
    */
   learnTfIdf(likedPosts, totalPosts = 400000) {
     if (!likedPosts?.length) return new Map();
 
-    // 提取所有liked posts的tags
-    const likedTags = [];
+    // 计算 TF：每个 tag 在 liked posts 中出现的篇数（每篇 post 只算 1 次）
+    const tf = new Map();
+
     likedPosts.forEach(post => {
-      // 适配新API返回的数据格式：{id, tags, score, rating}
-      if (post.tags && typeof post.tags === 'string') {
-        likedTags.push(post.tags);
-      }
-      // 兼容旧的模拟数据格式：{data: {tags}}
-      else if (post.data?.tags && typeof post.data.tags === 'string') {
-        likedTags.push(post.data.tags);
-      }
-    });
+      const tagsString = post.tags ?? post.data?.tags ?? '';
+      if (typeof tagsString !== 'string') return;
 
-    // 计算TF (词频)
-    const tf1 = new Map(); // tag出现次数
-    const tf2 = new Map(); // tag总词频
-
-    likedTags.forEach(tagsString => {
       const tags = tagsString.split(' ').filter(Boolean);
+      const seen = new Set();
       tags.forEach(tag => {
-        tf1.set(tag, (tf1.get(tag) || 0) + 1);
-        tf2.set(tag, (tf2.get(tag) || 0) + tags.length);
+        if (seen.has(tag)) return;
+        seen.add(tag);
+        if (!isTagmeTag(tag)) {
+          tf.set(tag, (tf.get(tag) || 0) + 1);
+        }
       });
     });
 
-    // 构建TF-IDF映射
-    const tfIdfMap = new Map();
+    // 构建 weightMap
+    const weightMap = new Map();
 
-    tf1.forEach((count, tag) => {
+    tf.forEach((count, tag) => {
       const tagInfo = this.state.tagInfo.get(tag);
       if (!tagInfo) return;
 
-      const tagCount = tagInfo.count || 1;
-      const tagType = tagInfo.type || 0;
+      const df = Math.max(tagInfo.count || 1, 1);
+      const tagType = tagInfo.type ?? 0;
+      const typeWeight = TFIDF_HYBRID_CONFIG.typeWeights[tagType] ?? 1.0;
 
-      // 计算TF-IDF
-      const tf = tf1.get(tag) / tf2.get(tag);
-      const idf = Math.log(totalPosts / (tagCount + 1));
-      const typeWeight = TFIDF_HYBRID_CONFIG.typeWeights[tagType] || 1.0;
-
-      const tfIdfScore = tf * idf * typeWeight;
-      tfIdfMap.set(tag, tfIdfScore);
+      // sublinear TF × IDF × typeWeight
+      const weight = (1 + Math.log(count)) * Math.log(totalPosts / df) * typeWeight;
+      if (weight > 0) weightMap.set(tag, weight);
     });
 
-    return tfIdfMap;
+    return weightMap;
+  }
+
+  /**
+   * 计算单个 post 的相关度分数
+   * @param {Object} post - post 对象
+   * @param {Map} weightMap - learnTfIdf 返回的权重映射
+   * @returns {number} 相关度分数（SUM of weights）
+   */
+  scorePost(post, weightMap) {
+    const tagsString = post.data?.tags ?? post.tags ?? '';
+    if (typeof tagsString !== 'string') return 0;
+
+    const tags = tagsString.split(' ').filter(Boolean);
+    return tags.reduce((sum, tag) => sum + (weightMap.get(tag) || 0), 0);
+  }
+
+  /**
+   * 计算当前 posts 的相关度分数分布（直方图数据）
+   * @param {Array} posts - 当前页 posts
+   * @param {number} totalPosts - 总 post 数量
+   * @param {number} buckets - 分桶数
+   * @returns {{ histogram: Array, scores: Map, weightMap: Map }}
+   */
+  computeScoreDistribution(posts, totalPosts = 400000, buckets = 30) {
+    const empty = { histogram: [], scores: new Map(), weightMap: new Map() };
+    if (!this.state.likedPosts?.length || !posts?.length) return empty;
+
+    const weightMap = this.learnTfIdf(this.state.likedPosts, totalPosts);
+    const scores = new Map();
+
+    posts.forEach(post => {
+      scores.set(post.id, this.scorePost(post, weightMap));
+    });
+
+    const positiveScores = [...scores.values()].filter(s => s > 0);
+    if (!positiveScores.length) return { histogram: [], scores, weightMap };
+
+    const max = Math.max(...positiveScores);
+    if (max === 0) return { histogram: [], scores, weightMap };
+
+    const width = max / buckets;
+    const histogram = Array.from({ length: buckets }, (_, i) => ({
+      min: +(i * width).toFixed(2),
+      max: +((i + 1) * width).toFixed(2),
+      count: 0,
+    }));
+
+    positiveScores.forEach(s => {
+      const idx = Math.min(Math.floor(s / width), buckets - 1);
+      histogram[idx].count++;
+    });
+
+    return { histogram, scores, weightMap };
+  }
+
+  /**
+   * 按相关度阈值过滤 posts（不改变顺序）
+   * @param {Array} posts - posts 数组
+   * @param {number} totalPosts - 总 post 数量
+   * @returns {{ filtered: Array, removedCount: number }}
+   */
+  filterByRelevance(posts, totalPosts = 400000) {
+    const { threshold } = this.state.relevanceFilterConfig || {};
+    if (!threshold || threshold <= 0 || !posts?.length) {
+      return { filtered: posts, removedCount: 0 };
+    }
+
+    if (!this.state.likedPosts?.length) {
+      return { filtered: posts, removedCount: 0 };
+    }
+
+    const weightMap = this.learnTfIdf(this.state.likedPosts, totalPosts);
+    let removedCount = 0;
+
+    const filtered = posts.filter(post => {
+      const score = this.scorePost(post, weightMap);
+      if (score < threshold) {
+        removedCount++;
+        return false;
+      }
+      return true;
+    });
+
+    return { filtered, removedCount };
   }
 
   /**
