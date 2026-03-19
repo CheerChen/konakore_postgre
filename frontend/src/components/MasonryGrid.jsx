@@ -6,23 +6,46 @@ const MasonryGrid = ({ posts, onImageClick, LazyImageCard, isLoading, onLikeChan
   // 使用传入的LazyImageCard组件
   const CardComponent = LazyImageCard;
 
+  // 动态计算列数配置
+  const getColumns = () => {
+    const baseColumns = { xs: 2, sm: 3, md: 4, lg: 5 };
+    // 如果结果数量少于最大列数，则使用结果数量作为列数
+    const maxColumns = Math.max(...Object.values(baseColumns));
+    if (posts.length > 0 && posts.length < maxColumns) {
+      return {
+        xs: Math.min(posts.length, baseColumns.xs),
+        sm: Math.min(posts.length, baseColumns.sm), 
+        md: Math.min(posts.length, baseColumns.md),
+        lg: Math.min(posts.length, baseColumns.lg)
+      };
+    }
+    return baseColumns;
+  };
+
+  const columns = getColumns();
+
   return (
     <Box 
       sx={{ 
         width: '100%',
+        minWidth: '100%', // 确保最小宽度是100%
         overflow: 'hidden', // 防止内容溢出
         px: { xs: 1, sm: 2 }, // 添加左右内边距
       }}
     >
       <Fade in={!isLoading} timeout={500}>
         <Masonry 
-          columns={{ xs: 2, sm: 3, md: 4, lg: 5 }} 
+          columns={columns} 
           spacing={2}
           sx={{
             width: '100%',
+            minWidth: '100%', // 确保最小宽度是100%
             margin: 0, // 重置margin
+            display: 'flex', // 强制使用flex布局
+            justifyContent: 'flex-start', // 始终左对齐
             '& .MuiMasonry-root': {
               maxWidth: '100%', // 确保不超出容器宽度
+              minWidth: '100%', // 确保最小宽度是100%
             }
           }}
         >

@@ -1,17 +1,30 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardMedia, IconButton, Box, Skeleton, Fade, Grow, Snackbar, Alert } from '@mui/material';
 import FavoriteBorderIcon from '@mui/icons-material/FavoriteBorder';
 import FavoriteIcon from '@mui/icons-material/Favorite';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useInView } from 'react-intersection-observer';
 import { toggleLike } from '../api';
+import { getImageUrl, imageRetryHelper } from '../utils/imageUtils';
 
 const LazyImageCard = ({ post, index, onImageClick, onLikeChange }) => {
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageError, setImageError] = useState(false);
   const [isLiked, setIsLiked] = useState(post.is_liked);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const [shouldLoadImage, setShouldLoadImage] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
+  const [isRetrying, setIsRetrying] = useState(false);
   const queryClient = useQueryClient();
+
+  const maxRetries = 2; // 最大重试次数
+
+  // 处理图片 URL
+  const getImageUrl = (url) => {
+    if (!url) return 'https://via.placeholder.com/300';
+    
+    return url.replace('konachan.com', 'konachan.net');
+  };
 
   // 懒加载监听
   const { ref, inView } = useInView({
@@ -19,6 +32,79 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange }) => {
     threshold: 0.1,
     rootMargin: '50px'
   });
+
+  // 当图片进入视口时，直接开始加载
+  useEffect(() => {
+    if (inView && !shouldLoadImage && !imageError && !isRetrying) {
+      setShouldLoadImage(true);
+    }
+  }, [inView, shouldLoadImage, imageError, isRetrying]);
+
+  // 重试加载图片的函数
+  const retryLoadImage = async () => {
+    if (retryCount >= maxRetries) {
+      console.warn(`Max retries reached for image: ${post.id}`);
+      return;
+    }
+
+    setIsRetrying(true);
+    setImageError(false);
+    setImageLoaded(false);
+
+    try {
+      // 使用重试助手
+      await imageRetryHelper.withRetry(async () => {
+        return new Promise((resolve, reject) => {
+          const img = new Image();
+          
+          const timeout = setTimeout(() => {
+            img.onload = null;
+            img.onerror = null;
+            reject(new Error('Image load timeout'));
+          }, 10000);
+
+          img.onload = () => {
+            clearTimeout(timeout);
+            resolve();
+          };
+
+          img.onerror = () => {
+            clearTimeout(timeout);
+            reject(new Error('Image load failed'));
+          };
+
+          img.src = getImageUrl(post.raw_data?.preview_url);
+        });
+      }, 1); // 只重试1次，因为组件本身会管理重试次数
+
+      setRetryCount(prev => prev + 1);
+      setShouldLoadImage(false);
+      setTimeout(() => {
+        setShouldLoadImage(true);
+        setIsRetrying(false);
+      }, 100);
+    } catch (error) {
+      console.error('Image retry failed:', error);
+      if (retryCount >= maxRetries) {
+        setImageError(true);
+      }
+      setIsRetrying(false);
+    }
+  };
+
+  // 处理图片加载错误
+  const handleImageError = () => {
+    console.warn(`Image load failed for post ${post.id}, retry count: ${retryCount}`);
+    
+    if (retryCount < maxRetries) {
+      // 自动重试
+      retryLoadImage();
+    } else {
+      // 达到最大重试次数，标记为错误
+      setImageError(true);
+      setIsRetrying(false);
+    }
+  };
 
   const mutation = useMutation({
     mutationFn: toggleLike,
@@ -60,13 +146,6 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange }) => {
     setSnackbar({ ...snackbar, open: false });
   };
 
-  // 处理图片 URL
-  const getImageUrl = (url) => {
-    if (!url) return 'https://via.placeholder.com/300';
-    
-    return url.replace('konachan.com', 'konachan.net');
-  };
-
   const imageUrl = getImageUrl(post.raw_data?.preview_url);
 
   return (
@@ -84,16 +163,16 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange }) => {
       >
       {inView ? (
         <>
-          {!imageLoaded && !imageError && (
+          {(!imageLoaded && !imageError) || isRetrying ? (
             <Skeleton 
               variant="rectangular" 
               width="100%" 
               height="100%" 
               animation="wave"
             />
-          )}
+          ) : null}
           
-          {!imageError && (
+          {shouldLoadImage && !imageError && !isRetrying && (
             <Fade in={imageLoaded} timeout={600}>
               <CardMedia
                 component="img"
@@ -101,7 +180,7 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange }) => {
                 alt="image"
                 onClick={() => onImageClick(index)}
                 onLoad={() => setImageLoaded(true)}
-                onError={() => setImageError(true)}
+                onError={handleImageError}
                 sx={{
                   display: imageLoaded ? 'block' : 'none',
                   width: '100%',
@@ -117,20 +196,32 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange }) => {
             </Fade>
           )}
           
-          {imageError && (
+          {imageError && !isRetrying && (
             <Grow in={true} timeout={400}>
               <Box
                 sx={{
                   width: '100%',
                   height: 200,
                   display: 'flex',
+                  flexDirection: 'column',
                   alignItems: 'center',
                   justifyContent: 'center',
                   backgroundColor: 'grey.200',
-                  color: 'grey.500'
+                  color: 'grey.500',
+                  cursor: 'pointer'
+                }}
+                onClick={() => {
+                  if (retryCount < maxRetries) {
+                    retryLoadImage();
+                  }
                 }}
               >
-                图片加载失败
+                <div>图片加载失败</div>
+                {retryCount < maxRetries && (
+                  <div style={{ fontSize: '12px', marginTop: '4px' }}>
+                    点击重试 ({retryCount}/{maxRetries})
+                  </div>
+                )}
               </Box>
             </Grow>
           )}

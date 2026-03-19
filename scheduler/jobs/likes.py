@@ -1,7 +1,7 @@
 import time
 from psycopg2.extras import RealDictCursor
 from .. import config
-from ..db import get_db_connection, try_advisory_lock
+from ..db import get_db_connection
 
 
 def process_likes_batch(limit: int = 100) -> int:
@@ -88,11 +88,6 @@ def run_likes_process():
     print("[Likes] Starting likes migration process...")
     try:
         conn = get_db_connection()
-        # 使用专门的advisory lock防止重复运行
-        if not try_advisory_lock(conn, "process-likes"):
-            print("[Likes] Another instance active. Exit.")
-            conn.close()
-            return
             
         idle = 0
         while True:
@@ -103,7 +98,7 @@ def run_likes_process():
             else:
                 idle += 1
                 # 空批时退避
-                sleep_s = min(30 * idle, 3600)
+                sleep_s = min(30 * (2 ** idle), 3600)
                 print(f"[Likes] Idle batch. Sleep {sleep_s}s")
                 time.sleep(sleep_s)
                 continue

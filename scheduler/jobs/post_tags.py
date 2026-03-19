@@ -1,7 +1,7 @@
 import time
 from psycopg2.extras import RealDictCursor
 from .. import config
-from ..db import get_db_connection, try_advisory_lock
+from ..db import get_db_connection
 
 
 def process_post_tags_batch(limit: int = config.BATCH_SIZE_POST_TAGS) -> int:
@@ -88,10 +88,7 @@ def run_post_tags_process():
     print("[PostTags] Starting post_tags association process...")
     try:
         conn = get_db_connection()
-        if not try_advisory_lock(conn, config.LOCK_POST_TAGS):
-            print("[PostTags] Another instance active. Exit.")
-            conn.close()
-            return
+
         idle = 0
         while True:
             processed = process_post_tags_batch()
@@ -101,7 +98,7 @@ def run_post_tags_process():
             else:
                 idle += 1
                 # 空批时退避
-                sleep_s = min(30 * idle, 3600)
+                sleep_s = min(30 * (2 ** idle), 3600)
                 print(f"[PostTags] Idle batch. Sleep {sleep_s}s")
                 time.sleep(sleep_s)
                 continue

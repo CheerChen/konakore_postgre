@@ -4,6 +4,7 @@ import react from '@vitejs/plugin-react'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  // Dockerfile 环境配置 (npm run preview)
   preview: {
     host: '0.0.0.0',
     port: 5173,
@@ -25,11 +26,12 @@ export default defineConfig({
       }
     }
   },
+  // 开发环境配置 (npm run dev)
   server: {
     proxy: {
       // 代理 API 请求到后端服务（开发环境）
       '/api': {
-        target: 'http://localhost:3000',
+        target: 'http://192.168.0.110:3000',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ''),
       },

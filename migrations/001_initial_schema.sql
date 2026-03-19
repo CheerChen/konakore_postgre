@@ -32,11 +32,30 @@ CREATE TABLE schedule_state (
     last_run_at TIMESTAMPTZ
 );
 
+CREATE TABLE file_sync (
+    id SERIAL PRIMARY KEY,
+    post_id BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    download_url TEXT NOT NULL,
+    expected_size BIGINT,
+    actual_size BIGINT,
+    file_path TEXT,
+    file_ext TEXT,
+    aria_log JSONB,
+    sync_status TEXT DEFAULT 'PENDING', -- PENDING, DOWNLOADING, COMPLETE, DELETED
+    is_deleted BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_file_sync_post_id ON file_sync(post_id);
+CREATE INDEX idx_file_sync_sync_status ON file_sync(sync_status);
+
 -- Seed the initial states for our sync jobs
 INSERT INTO schedule_state (job_name, state)
 VALUES
     ('backfill-all', '{"current_page": 1, "retries": 0, "is_active": true}'),
     ('sync-recent', '{"current_page": 1, "retries": 0}'),
-    ('sync-tags', '{"current_page": 1, "retries": 0, "is_active": true}');
+    ('sync-tags', '{"current_page": 1, "retries": 0, "is_active": true}'),
+    ('file-sync', '{"last_check": 0, "is_active": true}');
 
 -- Other tables like `post_tags`, `likes` from previous plans go here.
