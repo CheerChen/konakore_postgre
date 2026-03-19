@@ -12,7 +12,3 @@ POSTGRES_DB = os.getenv("POSTGRES_DB")
 POSTGRES_USER = os.getenv("POSTGRES_USER")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
 
-# Advisory lock names
-LOCK_POST_TAGS = "process-post-tags"
-LOCK_BACKFILL_POSTS = "backfill-posts"  # reserved if needed later
-LOCK_TAG_SYNC = "sync-tags"  # reserved

@@ -51,6 +51,24 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - PYTHONUNBUFFERED=1
+
+  # 4. File Sync Service
+  file_sync:
+    image: konakore_postgre_file_sync:latest
+    build:
+      context: .
+      dockerfile: file_sync/Dockerfile
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - '8090:8090'  # Expose webhook port for API communication
     volumes:
       - ./wallpaper:/wallpaper
     environment:
@@ -60,8 +78,9 @@ services:
       - PYTHONUNBUFFERED=1
       - ARIA2_URL=http://aria2:6800/jsonrpc
       - ARIA2_SECRET=
+      - DOWNLOAD_BASE_PATH=/wallpaper
 
-  # 4. Frontend Service (React + Vite + Nginx)
+  # 5. Frontend Service (React + Vite + Nginx)
   frontend:
     image: konakore_postgre_frontend:latest
     build:

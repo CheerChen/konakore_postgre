@@ -42,6 +42,20 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    environment:
+      - POSTGRES_USER=konakore
+      - POSTGRES_PASSWORD=secret
+      - POSTGRES_DB=konakore
+      - PYTHONUNBUFFERED=1
+
+  file_sync:
+    image: 192.168.0.110:5000/my-konakore-file-sync:latest
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - '8090:8090'  # Expose webhook port for API communication
     volumes:
       - /mnt/hd1/Wallpaper:/wallpaper
     environment:
@@ -51,6 +65,7 @@ services:
       - PYTHONUNBUFFERED=1
       - ARIA2_URL=ws://192.168.0.110:6800/jsonrpc
       - ARIA2_SECRET=p3terx
+      - DOWNLOAD_BASE_PATH=/wallpaper
 
   frontend:
     image: 192.168.0.110:5000/my-konakore-frontend:latest
