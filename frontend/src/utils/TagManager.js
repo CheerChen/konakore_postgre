@@ -1,4 +1,4 @@
-import { getTags } from '../api';
+import { getTags, getUserPreferences } from '../api';
 
 // Tag类型常量定义
 export const TAG_TYPES = {
@@ -7,6 +7,52 @@ export const TAG_TYPES = {
   COPYRIGHT: 3,
   CHARACTER: 4,
   COMPANY: 6
+};
+
+// 相关度排序的权重配置
+export const RELEVANCE_WEIGHTS = {
+  ARTIST: 10.0,     // 画师 - 最重要，决定风格偏好 (提高权重)
+  COPYRIGHT: 5.0,   // 版权 - 作品系列偏好 (提高权重)
+  CHARACTER: 3.0,   // 角色 - 角色偏好 (提高权重)
+  GENERAL: 0.2,     // 通用 - 基础属性，大幅降低权重避免刷分
+  COMPANY: 2.0,     // 公司 - 提高权重
+  OTHER: 1.0        // 其他类型
+};
+
+// GENERAL标签的限制配置
+export const GENERAL_LIMITS = {
+  MIN_LIKED_COUNT: 50,    // 只考虑被收藏50次以上的GENERAL标签
+  MAX_CONTRIBUTION: 0.3,  // GENERAL标签最多贡献总分的30%
+  MAX_TAGS: 10           // 每个post最多计算10个GENERAL标签
+};
+
+// TAGME标签列表 - 这些标签在计算相关度时会被完全忽略
+export const TAGME_EXCLUDE_TAGS = [
+  'tagme',                     // 通用tagme标签
+  'tagme_(artist)',            // 画师未知标签
+  'tagme_(character)',         // 角色未知标签
+];
+
+// 需要在排序中置底的标签列表 - 这些标签的posts会被排到最后
+export const BOTTOM_PRIORITY_TAGS = [
+  'no_humans',                 // 无人物
+  'otoko_no_ko',                 // 男孩子
+];
+
+// 检查是否为需要排除的tagme类型标签
+export const isTagmeTag = (tagName) => {
+  // 直接匹配已知的tagme标签
+  if (TAGME_EXCLUDE_TAGS.includes(tagName)) {
+    return true;
+  }
+  
+  // 模糊匹配其他tagme变体（以tagme开头或包含tagme_的异常标签）
+  // if (tagName.startsWith('tagme_') || tagName.startsWith('tagme(') || 
+  //     tagName.includes('tagme_') || tagName.endsWith('tagme')) {
+  //   return true;
+  // }
+  
+  return false;
 };
 
 // Tag类型对应的颜色映射
@@ -63,6 +109,8 @@ class TagManager {
       tagInfo: new Map(),                 // 原 globalTagInfoCache  
       translations: null,                 // 原 globalTagTranslations
       translationObserver: null,          // MutationObserver实例
+      userPreferences: null,              // 用户偏好数据
+      preferencesLastFetch: null,         // 上次获取偏好数据的时间
     };
     
     // 事件监听器
@@ -221,6 +269,293 @@ class TagManager {
     return added;
   }
 
+  // ===== 用户偏好管理 =====
+
+  /**
+   * 获取用户偏好数据
+   * @param {boolean} forceRefresh - 是否强制刷新数据
+   */
+  async fetchUserPreferences(forceRefresh = false) {
+    try {
+      // 检查是否需要刷新数据（缓存30分钟）
+      const now = Date.now();
+      const cacheTime = 30 * 60 * 1000; // 30分钟
+      
+      if (!forceRefresh && 
+          this.state.userPreferences && 
+          this.state.preferencesLastFetch && 
+          (now - this.state.preferencesLastFetch) < cacheTime) {
+        return this.state.userPreferences;
+      }
+
+      const preferences = await getUserPreferences();
+      
+      this.state.userPreferences = preferences;
+      this.state.preferencesLastFetch = now;
+      
+      this.notify({ 
+        type: 'user-preferences-updated', 
+        data: preferences 
+      });
+      
+      return preferences;
+    } catch (error) {
+      console.warn('Failed to fetch user preferences:', error);
+      return null;
+    }
+  }
+
+  /**
+   * 计算单个post的相关度分数
+   * @param {Object} post - post对象
+   * @returns {number} 相关度分数
+   */
+  calculatePostRelevanceScore(post) {
+    if (!this.state.userPreferences?.preferences_by_type) {
+      return 0;
+    }
+
+    const preferences = this.state.userPreferences.preferences_by_type;
+    
+    // 从post中提取tags
+    let postTags = [];
+    if (post.raw_data?.tags && typeof post.raw_data.tags === 'string') {
+      postTags = post.raw_data.tags.split(' ').filter(Boolean);
+    }
+
+    // 分别计算不同类型标签的分数
+    let artistScore = 0;
+    let copyrightScore = 0;
+    let characterScore = 0;
+    let generalScore = 0;
+    let companyScore = 0;
+    let otherScore = 0;
+
+    // 收集GENERAL标签用于后续限制
+    const generalMatches = [];
+
+    // 为每个tag计算分数
+    postTags.forEach(tagName => {
+      // 排除tagme类型标签
+      if (isTagmeTag(tagName)) {
+        return; // tagme标签不参与分数计算
+      }
+
+      // 获取tag信息
+      const tagInfo = this.state.tagInfo.get(tagName);
+      if (!tagInfo) return;
+
+      const tagType = tagInfo.type;
+      let typeName = 'OTHER';
+      let weight = RELEVANCE_WEIGHTS.OTHER;
+
+      // 确定tag类型和权重
+      switch (tagType) {
+        case TAG_TYPES.GENERAL:
+          typeName = 'GENERAL';
+          weight = RELEVANCE_WEIGHTS.GENERAL;
+          break;
+        case TAG_TYPES.ARTIST:
+          typeName = 'ARTIST';
+          weight = RELEVANCE_WEIGHTS.ARTIST;
+          break;
+        case TAG_TYPES.COPYRIGHT:
+          typeName = 'COPYRIGHT';
+          weight = RELEVANCE_WEIGHTS.COPYRIGHT;
+          break;
+        case TAG_TYPES.CHARACTER:
+          typeName = 'CHARACTER';
+          weight = RELEVANCE_WEIGHTS.CHARACTER;
+          break;
+        case TAG_TYPES.COMPANY:
+          typeName = 'COMPANY';
+          weight = RELEVANCE_WEIGHTS.COMPANY;
+          break;
+      }
+
+      // 查找用户对该tag的偏好
+      const typePreferences = preferences[typeName];
+      if (typePreferences) {
+        const tagPreference = typePreferences.find(pref => pref.name === tagName);
+        if (tagPreference) {
+          // 计算分数：用户喜欢次数 * 类型权重 * 偏好比率加成
+          const baseScore = tagPreference.liked_count * weight;
+          const preferenceBonus = tagPreference.preference_ratio / 100; // 转换为小数
+          const finalScore = baseScore * (1 + preferenceBonus);
+
+          // 根据类型累加到对应分数
+          switch (tagType) {
+            case TAG_TYPES.ARTIST:
+              artistScore += finalScore;
+              break;
+            case TAG_TYPES.COPYRIGHT:
+              copyrightScore += finalScore;
+              break;
+            case TAG_TYPES.CHARACTER:
+              characterScore += finalScore;
+              break;
+            case TAG_TYPES.COMPANY:
+              companyScore += finalScore;
+              break;
+            case TAG_TYPES.GENERAL:
+              // GENERAL标签需要额外限制
+              if (tagPreference.liked_count >= GENERAL_LIMITS.MIN_LIKED_COUNT) {
+                generalMatches.push({
+                  score: finalScore,
+                  tagName: tagName,
+                  likedCount: tagPreference.liked_count
+                });
+              }
+              break;
+            default:
+              otherScore += finalScore;
+              break;
+          }
+        }
+      }
+    });
+
+    // 处理GENERAL标签：按分数排序，取前N个，并限制总贡献
+    generalMatches.sort((a, b) => b.score - a.score);
+    const limitedGeneralMatches = generalMatches.slice(0, GENERAL_LIMITS.MAX_TAGS);
+    limitedGeneralMatches.forEach(match => {
+      generalScore += match.score;
+    });
+
+    // 计算核心分数（非GENERAL）
+    const coreScore = artistScore + copyrightScore + characterScore + companyScore + otherScore;
+    
+    // 限制GENERAL分数不超过总分的指定比例
+    const maxGeneralScore = coreScore * GENERAL_LIMITS.MAX_CONTRIBUTION / (1 - GENERAL_LIMITS.MAX_CONTRIBUTION);
+    const finalGeneralScore = Math.min(generalScore, maxGeneralScore);
+
+    // 计算最终分数：正分 + 限制后的GENERAL分
+    const totalScore = coreScore + finalGeneralScore;
+
+    // 确保分数不低于0
+    const finalScore = Math.max(0, totalScore);
+
+    return Math.round(finalScore * 100) / 100; // 保留两位小数
+  }
+
+  /**
+   * 检查post是否包含任何置底优先级的标签
+   * @param {Object} post - post对象
+   * @returns {boolean} 是否包含置底标签
+   */
+  hasBottomPriorityTag(post) {
+    if (post.raw_data?.tags && typeof post.raw_data.tags === 'string') {
+      const postTags = post.raw_data.tags.split(' ').filter(Boolean);
+      return BOTTOM_PRIORITY_TAGS.some(tag => postTags.includes(tag));
+    }
+    return false;
+  }
+
+  /**
+   * 获取post中的置底优先级标签列表
+   * @param {Object} post - post对象
+   * @returns {Array} 包含的置底标签列表
+   */
+  getBottomPriorityTags(post) {
+    if (post.raw_data?.tags && typeof post.raw_data.tags === 'string') {
+      const postTags = post.raw_data.tags.split(' ').filter(Boolean);
+      return BOTTOM_PRIORITY_TAGS.filter(tag => postTags.includes(tag));
+    }
+    return [];
+  }
+
+  /**
+   * 对posts数组按相关度排序
+   * @param {Array} posts - posts数组
+   * @param {string} order - 排序方向 'desc' | 'asc'
+   * @returns {Array} 排序后的posts数组
+   */
+  sortPostsByRelevance(posts, order = 'desc') {
+    if (!posts?.length) return posts;
+    
+    // 确保有用户偏好数据
+    if (!this.state.userPreferences) {
+      console.warn('No user preferences loaded for relevance sorting');
+      return posts;
+    }
+
+    // 计算每个post的相关度分数并排序
+    const postsWithScores = posts.map(post => ({
+      ...post,
+      relevanceScore: this.calculatePostRelevanceScore(post),
+      hasBottomPriority: this.hasBottomPriorityTag(post)
+    }));
+
+    // 排序：先按置底标签分组，再按相关度排序
+    postsWithScores.sort((a, b) => {
+      // 优先级1: 置底标签的posts永远排在后面
+      if (a.hasBottomPriority !== b.hasBottomPriority) {
+        return a.hasBottomPriority - b.hasBottomPriority;
+      }
+      
+      // 优先级2: 在相同置底状态下，按相关度排序
+      if (order === 'asc') {
+        return a.relevanceScore - b.relevanceScore;
+      } else {
+        return b.relevanceScore - a.relevanceScore;
+      }
+    });
+
+    // 调试信息：显示前5个post的分数
+    if (postsWithScores.length > 0) {
+      const topPosts = postsWithScores.slice(0, 5);
+      console.log('🎯 相关度排序结果 (前5个):', topPosts.map(p => ({
+        id: p.id,
+        score: p.relevanceScore,
+        hasBottomPriority: p.hasBottomPriority,
+        bottomTags: this.getBottomPriorityTags(p),
+        sample_tags: p.raw_data?.tags?.split(' ').slice(0, 3).join(', ')
+      })));
+      
+      // 显示分数详细分解（仅第一个post）
+      if (topPosts.length > 0) {
+        const firstPost = topPosts[0];
+        const postTags = firstPost.raw_data?.tags?.split(' ').filter(Boolean) || [];
+        
+        console.log('🔍 详细分数分解 (Post ' + firstPost.id + '):', {
+          totalScore: firstPost.relevanceScore,
+          hasBottomPriority: firstPost.hasBottomPriority,
+          bottomTags: this.getBottomPriorityTags(firstPost),
+          sampleTags: postTags.slice(0, 10).join(', ') || 'N/A'
+        });
+      }
+    }
+
+    return postsWithScores;
+  }
+
+  /**
+   * 通用排序方法，让置底标签的posts在所有排序中都后置
+   * @param {Array} posts - posts数组
+   * @param {Function} compareFn - 比较函数
+   * @returns {Array} 排序后的posts数组
+   */
+  sortPostsWithBottomPriorityLast(posts, compareFn) {
+    if (!posts?.length) return posts;
+
+    // 为每个post添加置底标签标记
+    const postsWithFlags = posts.map(post => ({
+      ...post,
+      hasBottomPriority: this.hasBottomPriorityTag(post)
+    }));
+
+    // 排序：先按置底标签分组，再按自定义规则排序
+    return postsWithFlags.sort((a, b) => {
+      // 优先级1: 置底标签的posts永远排在后面
+      if (a.hasBottomPriority !== b.hasBottomPriority) {
+        return a.hasBottomPriority - b.hasBottomPriority;
+      }
+      
+      // 优先级2: 在相同置底状态下，使用自定义比较函数
+      return compareFn(a, b);
+    });
+  }
+
   // ===== 标签操作方法 =====
 
   /**
@@ -348,11 +683,14 @@ class TagManager {
         return el.textContent?.replace(/\s+/g, "_") || el.textContent;
       };
 
-      // 翻译 PhotoSwipe 弹窗中的标签
+      // 翻译 PhotoSwipe 弹窗中的标签（使用 data-tag 属性精确定位）
       this.setTagText('[data-tag]', textEn);
       
-      // 翻译普通的标签 Chip 组件
-      this.setTagText('.MuiChip-label', textEn);
+      // 翻译普通的标签 Chip 组件（只翻译带有 data-tag 属性的 Chip）
+      this.setTagText('[data-tag] .MuiChip-label', textEn);
+      
+      // 翻译 PhotoSwipe 弹窗中标签区域的 Chip（通过父容器限制范围）
+      this.setTagText('.hidden-caption-content [data-tag] .MuiChip-label', textEn);
 
       // 翻译搜索建议中的标签
       this.setTagText('[role="option"]', textEn);
@@ -407,7 +745,9 @@ class TagManager {
             // 检查是否有新的标签元素被添加
             mutation.addedNodes.forEach((node) => {
               if (node.nodeType === Node.ELEMENT_NODE) {
-                const hasTagElements = node.querySelector?.('.MuiChip-label, [data-tag], [role="option"]');
+                // 更精确地检查标签元素：只检查带有 data-tag 属性的元素或搜索选项
+                const hasTagElements = node.querySelector?.('[data-tag], [role="option"]') || 
+                                     node.matches?.('[data-tag], [role="option"]');
                 if (hasTagElements) {
                   shouldTranslate = true;
                 }

@@ -14,6 +14,7 @@ import { getPosts, searchTags, getTags } from '../api';
 import { formatFileSize, formatDate } from '../utils/formatters';
 import { getImageUrl, getImageDimensionsText } from '../utils/imageUtils';
 import { useTag } from '../contexts/TagContext';
+import { tagManager } from '../utils/TagManager';
 import { Box, CircularProgress, Typography, Chip } from '@mui/material';
 import { Link as LinkIcon, AspectRatio as SizeIcon, Star as ScoreIcon, DateRange as DateIcon, Storage as FileIcon, Favorite as FavoriteIcon } from '@mui/icons-material';
 
@@ -37,6 +38,19 @@ const HomePage = () => {
     getTagTranslation,
     isLoading: tagsLoading
   } = useTag();
+
+  // 初始化TagManager用户偏好数据
+  useEffect(() => {
+    const initializeUserPreferences = async () => {
+      try {
+        await tagManager.fetchUserPreferences();
+      } catch (error) {
+        console.warn('Failed to fetch user preferences:', error);
+      }
+    };
+
+    initializeUserPreferences();
+  }, []); // 只在组件挂载时执行一次
 
   // 当页面或筛选条件变化时，获取并缓存tag信息
   useEffect(() => {
@@ -158,40 +172,54 @@ const HomePage = () => {
     }));
 
     // 排序逻辑
-    const sortedPosts = [...postsWithUpdatedLikes].sort((a, b) => {
-      switch (sortOption) {
-        case 'score':
-          return (b.raw_data.score || 0) - (a.raw_data.score || 0);
-        
-        case 'id':
-          return (b.id || 0) - (a.id || 0);
-        
-        case 'file_size':
-          return (b.raw_data.file_size || 0) - (a.raw_data.file_size || 0);
-        
-        case 'waifu_pillow':
-          // waifu_pillow: 宽高比 > 2 的图片靠前 (width > height * 2)
-          const aRatio = (a.raw_data.width || 0) / (a.raw_data.height || 1);
-          const bRatio = (b.raw_data.width || 0) / (b.raw_data.height || 1);
-          const aIsWaifu = aRatio > 2 ? 1 : 0;
-          const bIsWaifu = bRatio > 2 ? 1 : 0;
+    let sortedPosts;
+    
+    if (sortOption === 'relevance') {
+      // 相关度排序：使用TagManager（已经包含置底标签后置逻辑）
+      sortedPosts = tagManager.sortPostsByRelevance(postsWithUpdatedLikes, 'desc');
+    } else {
+      // 其他排序方式：使用通用置底标签后置排序
+      sortedPosts = tagManager.sortPostsWithBottomPriorityLast(postsWithUpdatedLikes, (a, b) => {
+        switch (sortOption) {
+          case 'score':
+            return (b.raw_data.score || 0) - (a.raw_data.score || 0);
           
-          if (aIsWaifu !== bIsWaifu) {
-            return bIsWaifu - aIsWaifu; // waifu图片靠前
-          }
-          // 如果都是或都不是waifu，按宽高比降序
-          return bRatio - aRatio;
-        
-        case 'shuffle':
-          // 随机排序 - 使用post id作为seed保证相同数据的排序一致性
-          const seedA = (a.id || 0) * 9301 + 49297;
-          const seedB = (b.id || 0) * 9301 + 49297;
-          return (seedA % 233280) - (seedB % 233280);
-        
-        default:
-          return 0;
-      }
-    });
+          case 'id':
+            return (b.id || 0) - (a.id || 0);
+          
+          case 'file_size':
+            return (b.raw_data.file_size || 0) - (a.raw_data.file_size || 0);
+          
+          case 'resolution':
+            // 按分辨率（像素总数）从大到小排序
+            const aPixels = (a.raw_data.width || 0) * (a.raw_data.height || 0);
+            const bPixels = (b.raw_data.width || 0) * (b.raw_data.height || 0);
+            return bPixels - aPixels;
+          
+          case 'waifu_pillow':
+            // waifu_pillow: 宽高比 > 2 的图片靠前 (width > height * 2)
+            const aRatio = (a.raw_data.width || 0) / (a.raw_data.height || 1);
+            const bRatio = (b.raw_data.width || 0) / (b.raw_data.height || 1);
+            const aIsWaifu = aRatio > 2 ? 1 : 0;
+            const bIsWaifu = bRatio > 2 ? 1 : 0;
+            
+            if (aIsWaifu !== bIsWaifu) {
+              return bIsWaifu - aIsWaifu; // waifu图片靠前
+            }
+            // 如果都是或都不是waifu，按宽高比降序
+            return bRatio - aRatio;
+          
+          case 'shuffle':
+            // 随机排序 - 使用post id作为seed保证相同数据的排序一致性
+            const seedA = (a.id || 0) * 9301 + 49297;
+            const seedB = (b.id || 0) * 9301 + 49297;
+            return (seedA % 233280) - (seedB % 233280);
+          
+          default:
+            return 0;
+        }
+      });
+    }
 
     return sortedPosts;
   }, [posts, sortOption, postsLikeState]);
