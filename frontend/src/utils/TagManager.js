@@ -331,8 +331,8 @@ class TagManager {
     
     // 从post中提取tags
     let postTags = [];
-    if (post.raw_data?.tags && typeof post.raw_data.tags === 'string') {
-      postTags = post.raw_data.tags.split(' ').filter(Boolean);
+    if (post.data?.tags && typeof post.data.tags === 'string') {
+      postTags = post.data.tags.split(' ').filter(Boolean);
     }
 
     // 分别计算不同类型标签的分数
@@ -521,13 +521,13 @@ class TagManager {
         score: p.relevanceScore,
         hasBottomPriority: p.hasBottomPriority,
         bottomTags: this.getBottomPriorityTags(p),
-        sample_tags: p.raw_data?.tags?.split(' ').slice(0, 3).join(', ')
+        sample_tags: p.data?.tags?.split(' ').slice(0, 3).join(', ')
       })));
       
       // 显示分数详细分解（仅第一个post）
       if (topPosts.length > 0) {
         const firstPost = topPosts[0];
-        const postTags = firstPost.raw_data?.tags?.split(' ').filter(Boolean) || [];
+        const postTags = firstPost.data?.tags?.split(' ').filter(Boolean) || [];
         
         console.log('🔍 详细分数分解 (Post ' + firstPost.id + '):', {
           totalScore: firstPost.relevanceScore,
@@ -610,9 +610,9 @@ class TagManager {
       if (post.tags && Array.isArray(post.tags)) {
         tags = post.tags;
       }
-      // 格式2: post.raw_data.tags (空格分隔的字符串)
-      else if (post.raw_data?.tags && typeof post.raw_data.tags === 'string') {
-        tags = post.raw_data.tags.split(' ').filter(Boolean);
+      // 格式2: post.data.tags (空格分隔的字符串)
+      else if (post.data?.tags && typeof post.data.tags === 'string') {
+        tags = post.data.tags.split(' ').filter(Boolean);
       }
       
       // 添加到Set中去重

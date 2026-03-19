@@ -10,7 +10,7 @@ import { getImageUrl, imageRetryHelper } from '../utils/imageUtils';
 const LazyImageCard = ({ post, index, onImageClick, onLikeChange }) => {
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageError, setImageError] = useState(false);
-  const [isLiked, setIsLiked] = useState(post.is_liked);
+  const [isLiked, setIsLiked] = useState(post.liked);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
   const [shouldLoadImage, setShouldLoadImage] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
@@ -83,7 +83,7 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange }) => {
             reject(new Error('Image load failed'));
           };
 
-          img.src = getImageUrl(post.raw_data?.preview_url);
+          img.src = getImageUrl(post.data?.preview_url);
         });
       }, 1); // 只重试1次，因为组件本身会管理重试次数
 
@@ -117,20 +117,21 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange }) => {
   };
 
   const mutation = useMutation({
-    mutationFn: toggleLike,
+    mutationFn: () => toggleLike(post.id, isLiked),
     onSuccess: (data) => {
       // 更新本地状态而不是重新获取数据
-      setIsLiked(data.is_liked);
+      const newLikedState = !isLiked; // 切换状态
+      setIsLiked(newLikedState);
       
       // 通知父组件状态变化
       if (onLikeChange) {
-        onLikeChange(post.id, data.is_liked);
+        onLikeChange(post.id, newLikedState);
       }
       
       // 显示成功消息
       setSnackbar({
         open: true,
-        message: data.is_liked ? '已添加到收藏' : '已从收藏中移除',
+        message: data.message || (newLikedState ? '已添加到收藏' : '已从收藏中移除'),
         severity: 'success'
       });
     },
@@ -146,7 +147,7 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange }) => {
 
   const handleLike = (e) => {
     e.stopPropagation();
-    mutation.mutate(post.id);
+    mutation.mutate();
   };
 
   const handleCloseSnackbar = (event, reason) => {
@@ -156,7 +157,7 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange }) => {
     setSnackbar({ ...snackbar, open: false });
   };
 
-  const imageUrl = getImageUrl(post.raw_data?.preview_url);
+  const imageUrl = getImageUrl(post.data?.preview_url);
 
   return (
     <>
@@ -166,8 +167,8 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange }) => {
           position: 'relative', 
           cursor: 'pointer', 
           lineHeight: 0,
-          aspectRatio: post.raw_data?.width && post.raw_data?.height 
-            ? `${post.raw_data.width} / ${post.raw_data.height}` 
+          aspectRatio: post.data?.width && post.data?.height 
+            ? `${post.data.width} / ${post.data.height}` 
             : '4 / 3'
         }}
       >
