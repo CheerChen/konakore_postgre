@@ -1,8 +1,5 @@
-import React, { useState, useMemo, useEffect, useRef, useCallback, useTransition } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import PhotoSwipeLightbox from 'photoswipe/lightbox';
-import 'photoswipe/style.css';
-import PhotoSwipeFullscreen from '../utils/photoswipe-fullscreen.esm';
+import React, { useState, useMemo, useEffect, useCallback, useTransition } from 'react';
+import { useQuery } from '@tanstack/react-query';
 
 import SearchBar from '../components/SearchBar';
 import MasonryGrid from '../components/MasonryGrid';
@@ -10,7 +7,7 @@ import AppLayout from '../components/AppLayout';
 import PaginationControls from '../components/PaginationControls';
 import SimplePagination from '../components/SimplePagination';
 import LazyImageCard from '../components/LazyImageCard';
-import { getPosts, searchTags, getTags } from '../api';
+import { getPosts, searchTags } from '../api';
 import { formatFileSize, formatDate } from '../utils/formatters';
 import { getImageUrl, getImageDimensionsText } from '../utils/imageUtils';
 import { useTag } from '../contexts/TagContext';
@@ -19,21 +16,20 @@ import { Box, CircularProgress, Typography, Chip } from '@mui/material';
 import { Link as LinkIcon, AspectRatio as SizeIcon, Star as ScoreIcon, DateRange as DateIcon, Storage as FileIcon, Favorite as FavoriteIcon } from '@mui/icons-material';
 import ExcludedTagsModal from '../components/ExcludedTagsModal';
 import RelevanceFilterModal from '../components/RelevanceFilterModal';
+import { usePhotoSwipe } from '../hooks/usePhotoSwipe';
+import CaptionContent from '../components/CaptionContent';
 
 const HomePage = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [perPage, setPerPage] = useState(100);
-  const [sortOption, setSortOption] = useState('id'); // 默认按ID降序
-  const [showLikedOnly, setShowLikedOnly] = useState(false);
-  const [showLikedArtistsOnly, setShowLikedArtistsOnly] = useState(false);
-  const [postsLikeState, setPostsLikeState] = useState({}); // 本地收藏状态缓存
-  const lightboxRef = useRef(null); // 用于存储PhotoSwipe实例
-  const slideshowRef = useRef({ interval: null, isPlaying: false }); // 幻灯片播放状态
+  const [sortOption, setSortOption] = useState('id');
+  const [postsLikeState, setPostsLikeState] = useState({});
   const [excludedTagsOpen, setExcludedTagsOpen] = useState(false);
   const [relevanceFilterOpen, setRelevanceFilterOpen] = useState(false);
+  const [weightMap, setWeightMap] = useState(new Map());
 
-  // 状态提升：排除标签和相关度阈值，从 tagManager 初始化
+  // 排除标签和相关度阈值，从 tagManager 初始化
   const [excludedTags, setExcludedTags] = useState(() => {
     const config = tagManager.getExcludedPostTagsConfig();
     return Array.isArray(config?.tags) ? config.tags : [];
@@ -43,9 +39,6 @@ const HomePage = () => {
     return Number(config?.threshold) || 0;
   });
 
-  const queryClient = useQueryClient();
-
-  // 使用新的 useTag Hook
   const {
     fetchTagInfo,
     addTagsToCache,
@@ -56,137 +49,85 @@ const HomePage = () => {
     isLoading: tagsLoading
   } = useTag();
 
-  // 初始化 TagManager 加载liked posts数据（用于TF-IDF排序）
+  // 从后端获取 TF-IDF 权重
   useEffect(() => {
-    const initializeLikedPosts = async () => {
-      try {
-        await tagManager.fetchLikedPosts();
-      } catch (error) {
-        console.warn('Failed to fetch liked posts:', error);
+    let cancelled = false;
+    tagManager.fetchRelevanceWeights().then(weights => {
+      if (!cancelled && weights?.size) {
+        setWeightMap(weights);
       }
-    };
-
-    initializeLikedPosts();
-  }, []); // 只在组件挂载时执行一次
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   // 当页面或筛选条件变化时，获取并缓存tag信息
   useEffect(() => {
     const fetchTagInfoData = async () => {
       try {
-        // 根据过滤条件确定liked参数
-        const likedParam = showLikedOnly ? true : (showLikedArtistsOnly ? true : null);
-        await fetchTagInfo(currentPage, perPage, likedParam);
+        await fetchTagInfo(currentPage, perPage, null);
       } catch (error) {
         console.warn('Failed to fetch tag info:', error);
       }
     };
-
-    // 延迟执行以避免过于频繁的API调用
     const timeoutId = setTimeout(fetchTagInfoData, 300);
     return () => clearTimeout(timeoutId);
-  }, [currentPage, perPage, showLikedOnly, showLikedArtistsOnly, fetchTagInfo]);
+  }, [currentPage, perPage, fetchTagInfo]);
 
-  // 处理来自LazyImageCard的收藏状态变化
-  const handleLikeChange = (postId, isLiked) => {
-    setPostsLikeState(prev => ({
-      ...prev,
-      [postId]: isLiked
-    }));
-  };
+  const handleLikeChange = useCallback((postId, isLiked) => {
+    setPostsLikeState(prev => ({ ...prev, [postId]: isLiked }));
+  }, []);
 
   // --- DATA FETCHING ---
   const postsQuery = useQuery({
-    queryKey: ['posts', currentPage, perPage, showLikedOnly, showLikedArtistsOnly],
-    queryFn: () => getPosts(currentPage, perPage, showLikedOnly ? true : null, showLikedArtistsOnly ? true : null),
+    queryKey: ['posts', currentPage, perPage],
+    queryFn: () => getPosts(currentPage, perPage),
     enabled: !searchQuery,
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    staleTime: 5 * 60 * 1000,
   });
 
   const searchQueryResults = useQuery({
-    queryKey: ['search', searchQuery, currentPage, perPage, showLikedOnly],
-    queryFn: () => searchTags(searchQuery, currentPage, perPage, showLikedOnly ? true : null),
+    queryKey: ['search', searchQuery, currentPage, perPage],
+    queryFn: () => searchTags(searchQuery, currentPage, perPage),
     enabled: !!searchQuery,
   });
 
   // --- EVENT HANDLERS ---
   const handleSearch = (query) => {
     setSearchQuery(query);
-    setCurrentPage(1); // 重置到第一页
-    setSortOption('id'); // 搜索时重置排序为id desc
-
-    // 如果搜索标签，自动关闭"仅收藏画师"开关
-    if (query && showLikedArtistsOnly) {
-      setShowLikedArtistsOnly(false);
-    }
+    setCurrentPage(1);
+    setSortOption('id');
   };
 
   const clearSearch = () => {
     setSearchQuery('');
-    setCurrentPage(1); // 重置到第一页
+    setCurrentPage(1);
   };
 
-  const handleTagClick = (tag) => {
+  const handleTagClick = useCallback((tag) => {
     setSearchQuery(tag);
-    setCurrentPage(1); // 重置到第一页
-    setSortOption('id'); // 搜索时重置排序为id desc
-
-    // 点击标签搜索时，自动关闭"仅收藏画师"开关
-    if (showLikedArtistsOnly) {
-      setShowLikedArtistsOnly(false);
-    }
-  };
+    setCurrentPage(1);
+    setSortOption('id');
+  }, []);
 
   const handlePageChange = (page) => {
     setCurrentPage(page);
-    // 滚动到顶部
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handlePerPageChange = (newPerPage) => {
     setPerPage(newPerPage);
-    setCurrentPage(1); // 重置到第一页
+    setCurrentPage(1);
   };
 
   const handleSortChange = (newSortOption) => {
     setSortOption(newSortOption);
   };
 
-  const handleLikedFilterChange = (newShowLikedOnly) => {
-    setShowLikedOnly(newShowLikedOnly);
-    // 如果打开"仅收藏"，则关闭"仅收藏画师"
-    if (newShowLikedOnly && showLikedArtistsOnly) {
-      setShowLikedArtistsOnly(false);
-    }
-    setCurrentPage(1); // 重置到第一页
-    // 保持当前搜索和排序选项不变，实现联动
-  };
-
-  const handleLikedArtistsFilterChange = (newShowLikedArtistsOnly) => {
-    setShowLikedArtistsOnly(newShowLikedArtistsOnly);
-    // 如果打开"仅收藏画师"，则关闭"仅收藏"
-    if (newShowLikedArtistsOnly && showLikedOnly) {
-      setShowLikedOnly(false);
-    }
-    setCurrentPage(1); // 重置到第一页
-    // 保持当前搜索和排序选项不变，实现联动
-  };
-  const onImageClick = (index) => {
-    // 使用PhotoSwipe API直接打开指定索引的图片
-    if (window.currentLightbox) {
-      // PhotoSwipeLightbox 实例方法：loadAndOpen(index, dataSource?)
-      window.currentLightbox.loadAndOpen(index);
-    } else {
-      console.log('PhotoSwipe lightbox not ready');
-    }
-  };
-
-  // 排除标签变更：即时更新 React state + 持久化
   const handleExcludedTagsChange = (newTags) => {
     setExcludedTags(newTags);
     tagManager.setExcludedPostTagsConfig({ tags: newTags });
   };
 
-  // 相关度阈值变更：useTransition 分离紧急/非紧急更新
   const [, startTransition] = useTransition();
   const handleRelevanceThresholdChange = useCallback((newThreshold) => {
     startTransition(() => {
@@ -229,18 +170,17 @@ const HomePage = () => {
     }, 0);
   }, [posts, excludedTags]);
 
-  // 预计算所有 post 的相关度分数（仅在 posts/totalPosts 变化时重算，滑块不触发）
+  // 预计算所有 post 的相关度分数（使用后端 TF-IDF 权重）
   const postScoresMap = useMemo(() => {
     const map = new Map();
-    if (!posts?.length || !tagManager.state.likedPosts?.length) return map;
-    const weightMap = tagManager.learnTfIdf(tagManager.state.likedPosts, totalPosts || 400000);
+    if (!posts?.length || !weightMap.size) return map;
     posts.forEach(post => {
       map.set(post.id, tagManager.scorePost(post, weightMap));
     });
     return map;
-  }, [posts, totalPosts]);
+  }, [posts, weightMap]);
 
-  // 相关度过滤统计（基于预计算分数，O(n) 查表）
+  // 相关度过滤统计
   const relevanceRemovedCount = useMemo(() => {
     if (!posts?.length || relevanceThreshold <= 0 || !postScoresMap.size) return 0;
     let removed = 0;
@@ -254,7 +194,6 @@ const HomePage = () => {
   const postsForGrid = useMemo(() => {
     if (!posts.length) return posts;
 
-    // 合并本地收藏状态到posts数据
     const postsWithUpdatedLikes = posts.map(post => ({
       ...post,
       liked: postsLikeState.hasOwnProperty(post.id)
@@ -262,7 +201,7 @@ const HomePage = () => {
         : post.liked
     }));
 
-    // 排除标签过滤（基于 React state）
+    // 排除标签过滤
     let filteredPosts = postsWithUpdatedLikes;
     if (excludedTags.length > 0) {
       filteredPosts = filteredPosts.filter(post => {
@@ -273,53 +212,39 @@ const HomePage = () => {
       });
     }
 
-    // 排序逻辑
-    let sortedPosts;
-
-    {
-      sortedPosts = [...filteredPosts].sort((a, b) => {
-        switch (sortOption) {
-          case 'score':
-            return (b.data.score || 0) - (a.data.score || 0);
-
-          case 'id':
-            return (b.id || 0) - (a.id || 0);
-
-          case 'file_size':
-            return (b.data.file_size || 0) - (a.data.file_size || 0);
-
-          case 'resolution':
-            // 按分辨率（像素总数）从大到小排序
-            const aPixels = (a.data.width || 0) * (a.data.height || 0);
-            const bPixels = (b.data.width || 0) * (b.data.height || 0);
-            return bPixels - aPixels;
-
-          case 'waifu_pillow':
-            // waifu_pillow: 宽高比 > 2 的图片靠前 (width > height * 2)
-            const aRatio = (a.data.width || 0) / (a.data.height || 1);
-            const bRatio = (b.data.width || 0) / (b.data.height || 1);
-            const aIsWaifu = aRatio > 2 ? 1 : 0;
-            const bIsWaifu = bRatio > 2 ? 1 : 0;
-
-            if (aIsWaifu !== bIsWaifu) {
-              return bIsWaifu - aIsWaifu; // waifu图片靠前
-            }
-            // 如果都是或都不是waifu，按宽高比降序
-            return bRatio - aRatio;
-
-          case 'shuffle':
-            // 随机排序 - 使用post id作为seed保证相同数据的排序一致性
-            const seedA = (a.id || 0) * 9301 + 49297;
-            const seedB = (b.id || 0) * 9301 + 49297;
-            return (seedA % 233280) - (seedB % 233280);
-
-          default:
-            return 0;
+    // 排序
+    let sortedPosts = [...filteredPosts].sort((a, b) => {
+      switch (sortOption) {
+        case 'score':
+          return (b.data.score || 0) - (a.data.score || 0);
+        case 'id':
+          return (b.id || 0) - (a.id || 0);
+        case 'file_size':
+          return (b.data.file_size || 0) - (a.data.file_size || 0);
+        case 'resolution': {
+          const aPixels = (a.data.width || 0) * (a.data.height || 0);
+          const bPixels = (b.data.width || 0) * (b.data.height || 0);
+          return bPixels - aPixels;
         }
-      });
-    }
+        case 'waifu_pillow': {
+          const aRatio = (a.data.width || 0) / (a.data.height || 1);
+          const bRatio = (b.data.width || 0) / (b.data.height || 1);
+          const aIsWaifu = aRatio > 2 ? 1 : 0;
+          const bIsWaifu = bRatio > 2 ? 1 : 0;
+          if (aIsWaifu !== bIsWaifu) return bIsWaifu - aIsWaifu;
+          return bRatio - aRatio;
+        }
+        case 'shuffle': {
+          const seedA = (a.id || 0) * 9301 + 49297;
+          const seedB = (b.id || 0) * 9301 + 49297;
+          return (seedA % 233280) - (seedB % 233280);
+        }
+        default:
+          return 0;
+      }
+    });
 
-    // 相关度阈值过滤（基于预计算 postScoresMap，O(n) 查表）
+    // 相关度阈值过滤
     if (relevanceThreshold > 0 && postScoresMap.size > 0) {
       sortedPosts = sortedPosts.filter(post => (postScoresMap.get(post.id) || 0) >= relevanceThreshold);
     }
@@ -327,238 +252,61 @@ const HomePage = () => {
     return sortedPosts;
   }, [posts, sortOption, postsLikeState, excludedTags, relevanceThreshold, postScoresMap]);
 
-  // 提取当前页面所有tags并更新缓存
+  // 帖子分组
+  const groupedPostsForGrid = useMemo(() => {
+    if (!postsForGrid.length) return { displayPosts: postsForGrid, groupMap: new Map() };
+
+    const childrenByParent = new Map();
+    const postById = new Map();
+
+    postsForGrid.forEach(post => {
+      postById.set(post.id, post);
+      const parentId = post.data?.parent_id;
+      if (parentId && parentId !== post.id) {
+        if (!childrenByParent.has(parentId)) childrenByParent.set(parentId, []);
+        childrenByParent.get(parentId).push(post);
+      }
+    });
+
+    const hiddenIds = new Set();
+    const groupMap = new Map();
+    childrenByParent.forEach((children, parentId) => {
+      if (postById.has(parentId)) {
+        children.forEach(child => hiddenIds.add(child.id));
+        groupMap.set(parentId, [postById.get(parentId), ...children]);
+      }
+    });
+
+    const displayPosts = postsForGrid.filter(post => !hiddenIds.has(post.id));
+    return { displayPosts, groupMap };
+  }, [postsForGrid]);
+
+  // Tags
   const currentPageTags = useMemo(() => {
     if (!postsForGrid?.length) return [];
+    return extractTagsFromPosts(postsForGrid);
+  }, [postsForGrid, extractTagsFromPosts]);
 
-    const result = extractTagsFromPosts(postsForGrid);
+  useEffect(() => {
+    if (currentPageTags.length > 0) addTagsToCache(currentPageTags);
+  }, [currentPageTags, addTagsToCache]);
 
-    // 添加到全局缓存
-    if (result.length > 0) {
-      addTagsToCache(result);
-    }
-
-    return result;
-  }, [postsForGrid, extractTagsFromPosts, addTagsToCache]);
-
-  // 智能的tags数据源：缓存标签优先，当前页面标签次之
   const availableTags = useMemo(() => {
     return mergeTagsWithCache(currentPageTags);
   }, [currentPageTags, mergeTagsWithCache]);
 
-  // 计算当前页面的收藏数
-  const currentPageLikedCount = useMemo(() => {
-    return postsForGrid.filter(post => post.liked).length;
-  }, [postsForGrid]);
+  // --- PHOTOSWIPE ---
+  const { onImageClick } = usePhotoSwipe({
+    displayPosts: groupedPostsForGrid.displayPosts,
+    allPosts: postsForGrid,
+    groupMap: groupedPostsForGrid.groupMap,
+    handleTagClick,
+    handleLikeChange,
+    postsLikeState,
+    posts,
+  });
 
-  // --- PHOTOSWIPE SETUP ---
-  // 仅在组件挂载时初始化PhotoSwipe
-  useEffect(() => {
-    // 使用 ref 来持久化幻灯片播放状态，避免闭包问题
-    const slideshowState = slideshowRef.current;
-    const SLIDESHOW_DELAY = 3000; // 3秒切换间隔
-
-    const lightbox = new PhotoSwipeLightbox({
-      pswpModule: () => import('photoswipe'),
-      showHideAnimationType: 'fade',
-      bgOpacity: 0.8,
-      dataSource: [], // 初始为空，后续动态更新
-    });
-
-    // 初始化全屏插件
-    new PhotoSwipeFullscreen(lightbox);
-
-    // 幻灯片播放功能
-    const startSlideshow = (pswp) => {
-      // 先清理可能存在的旧定时器
-      if (slideshowState.interval) {
-        clearInterval(slideshowState.interval);
-        slideshowState.interval = null;
-      }
-
-      if (slideshowState.isPlaying) return;
-
-      slideshowState.isPlaying = true;
-      updateSlideshowButton(pswp, true);
-
-      slideshowState.interval = setInterval(() => {
-        const numItems = pswp.getNumItems();
-        if (pswp.currIndex === numItems - 1) {
-          if (pswp.options.loop) {
-            pswp.next(); // 循环播放
-          } else {
-            stopSlideshow(pswp); // 到达最后一张停止
-          }
-        } else {
-          pswp.next();
-        }
-      }, SLIDESHOW_DELAY);
-    };
-
-    const stopSlideshow = (pswp) => {
-      if (!slideshowState.isPlaying) return;
-
-      slideshowState.isPlaying = false;
-      updateSlideshowButton(pswp, false);
-
-      if (slideshowState.interval) {
-        clearInterval(slideshowState.interval);
-        slideshowState.interval = null;
-      }
-    };
-
-    const toggleSlideshow = (pswp) => {
-      if (slideshowState.isPlaying) {
-        stopSlideshow(pswp);
-      } else {
-        startSlideshow(pswp);
-      }
-    };
-
-    const updateSlideshowButton = (pswp, playing) => {
-      const button = pswp.element?.querySelector('.pswp__button--slideshow');
-      if (button) {
-        button.classList.toggle('pswp__button--playing', playing);
-        button.setAttribute('aria-pressed', playing ? 'true' : 'false');
-
-        // 更新 SVG 图标而不破坏事件监听器
-        const svg = button.querySelector('svg');
-        if (svg) {
-          if (playing) {
-            // 暂停图标
-            svg.innerHTML = `<rect x="11" y="8" width="3" height="16"></rect>
-              <rect x="18" y="8" width="3" height="16"></rect>`;
-          } else {
-            // 播放图标
-            svg.innerHTML = `<path d="M12 8 L24 16 L12 24 Z"></path>`;
-          }
-        }
-      }
-    };
-
-    lightbox.on('uiRegister', () => {
-      const { pswp } = lightbox;
-
-      // 注册幻灯片播放按钮
-      pswp.ui.registerElement({
-        name: 'slideshow-button',
-        className: 'pswp__button--slideshow',
-        order: 8,
-        isButton: true,
-        html: `<svg aria-hidden="true" class="pswp__icn" viewBox="0 0 32 32" width="32" height="32">
-          <path d="M12 8 L24 16 L12 24 Z"></path>
-        </svg>`,
-        title: 'Toggle Slideshow',
-        onClick: (event, el) => {
-          event.preventDefault();
-          event.stopPropagation();
-          toggleSlideshow(pswp);
-          return false;
-        }
-      });
-
-      // 注册自定义标题
-      pswp.ui.registerElement({
-        name: 'custom-caption',
-        order: 9,
-        isButton: false,
-        appendTo: 'root',
-        html: 'Caption text',
-        onInit: (el, pswp) => {
-          el.style.cssText = `
-            position: absolute;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            z-index: 1000;
-            max-width: 90vw;
-          `;
-          pswp.on('change', () => {
-            const slideData = pswp.currSlide?.data;
-            const postId = slideData?.postId;
-            if (postId) {
-              const captionEl = document.querySelector(`[data-caption-id="${postId}"]`);
-              if (captionEl) {
-                el.innerHTML = captionEl.innerHTML;
-                const tagElements = el.querySelectorAll('[data-tag]');
-                tagElements.forEach(tagEl => {
-                  const tag = tagEl.getAttribute('data-tag');
-                  tagEl.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    pswp.close();
-                    setTimeout(() => handleTagClick(tag), 100);
-                  });
-                });
-              } else {
-                el.innerHTML = '';
-              }
-            } else {
-              el.innerHTML = '';
-            }
-          });
-          setTimeout(() => pswp.dispatch('change'), 50);
-        },
-      });
-
-      // 监听用户手动操作（拖动图片），暂停幻灯片播放
-      // 注意：不要监听 pointerDown，因为按钮点击也会触发
-      pswp.on('pointerMove', (e) => {
-        // 只在实际拖动时才暂停
-        if (e.originalEvent && slideshowState.isPlaying) {
-          stopSlideshow(pswp);
-        }
-      });
-
-      // 监听键盘事件（空格键控制播放/暂停）
-      pswp.on('keydown', (e) => {
-        if (e.originalEvent.key === ' ' || e.originalEvent.code === 'Space') {
-          e.originalEvent.preventDefault();
-          toggleSlideshow(pswp);
-        }
-      });
-
-      // PhotoSwipe 关闭时清理
-      pswp.on('close', () => {
-        stopSlideshow(pswp);
-      });
-    });
-
-    lightbox.init();
-    lightboxRef.current = lightbox;
-    window.currentLightbox = lightbox; // 保持对window的引用
-
-    return () => {
-      // 清理幻灯片定时器（使用 ref 确保清理正确的定时器）
-      if (slideshowRef.current.interval) {
-        clearInterval(slideshowRef.current.interval);
-        slideshowRef.current.interval = null;
-        slideshowRef.current.isPlaying = false;
-      }
-
-      if (lightboxRef.current) {
-        lightboxRef.current.destroy();
-        lightboxRef.current = null;
-      }
-      window.currentLightbox = null;
-    };
-  }, []); // 空依赖数组，确保只执行一次
-
-  // 当图片数据更新时，动态更新PhotoSwipe的数据源
-  useEffect(() => {
-    if (lightboxRef.current && postsForGrid.length > 0) {
-      const newDataSource = postsForGrid.map(post => ({
-        src: getImageUrl(post.data?.sample_url || post.data?.jpeg_url || post.data?.file_url),
-        msrc: getImageUrl(post.data?.preview_url),
-        w: post.data.width,
-        h: post.data.height,
-        alt: post.data.tags,
-        postId: post.id,
-      }));
-      lightboxRef.current.options.dataSource = newDataSource;
-    }
-  }, [postsForGrid]);
-
-  // --- RENDER LOGIC ---
+  // --- RENDER ---
   const renderContent = () => {
     if (isLoading) return <CircularProgress />;
     if (isError) return <Typography color="error">Error loading posts.</Typography>;
@@ -575,33 +323,24 @@ const HomePage = () => {
           totalItems={totalPosts}
           sortOption={sortOption}
           onSortChange={handleSortChange}
-          showLikedOnly={showLikedOnly}
-          onLikedFilterChange={handleLikedFilterChange}
-          showLikedArtistsOnly={showLikedArtistsOnly}
-          onLikedArtistsFilterChange={handleLikedArtistsFilterChange}
-          currentPageLikedCount={currentPageLikedCount}
+          onOpenExcludedTags={() => setExcludedTagsOpen(true)}
+          onOpenRelevanceFilter={() => setRelevanceFilterOpen(true)}
+          excludedCountOnPage={excludedCountOnPage}
+          relevanceRemovedCount={relevanceRemovedCount}
         />
         {isLoading ? (
-          <Box sx={{
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            minHeight: '400px',
-            flexDirection: 'column',
-            gap: 2
-          }}>
+          <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px', flexDirection: 'column', gap: 2 }}>
             <CircularProgress size={60} />
-            <Typography variant="body1" color="text.secondary">
-              Loading images...
-            </Typography>
+            <Typography variant="body1" color="text.secondary">Loading images...</Typography>
           </Box>
         ) : (
           <MasonryGrid
-            posts={postsForGrid}
+            posts={groupedPostsForGrid.displayPosts}
             onImageClick={onImageClick}
             LazyImageCard={LazyImageCard}
             isLoading={isLoading}
             onLikeChange={handleLikeChange}
+            groupMap={groupedPostsForGrid.groupMap}
           />
         )}
         <SimplePagination
@@ -615,12 +354,7 @@ const HomePage = () => {
   };
 
   return (
-    <AppLayout
-      onOpenSettings={() => setExcludedTagsOpen(true)}
-      onOpenRelevanceFilter={() => setRelevanceFilterOpen(true)}
-      relevanceRemovedCount={relevanceRemovedCount}
-      excludedCountOnPage={excludedCountOnPage}
-    >
+    <AppLayout>
       <ExcludedTagsModal
         open={excludedTagsOpen}
         onClose={() => setExcludedTagsOpen(false)}
@@ -643,227 +377,33 @@ const HomePage = () => {
         onClearSearch={clearSearch}
         totalPosts={totalPosts}
         availableTags={availableTags}
-        showLikedOnly={showLikedOnly}
       />
 
       <Box sx={{
         mx: 'auto',
         maxWidth: '100%',
-        minWidth: '100%', // 确保最小宽度
+        minWidth: '100%',
         width: '100%',
         overflow: 'hidden',
         px: { xs: 1, sm: 2, md: 3 },
-        // 确保即使内容少也占满宽度
         display: 'flex',
         flexDirection: 'column',
-        alignItems: 'stretch', // 子元素拉伸占满宽度
+        alignItems: 'stretch',
       }}>
         {renderContent()}
       </Box>
 
-      {/* Hidden caption content for each image */}
-      {postsForGrid.map((post, index) => (
-        <div
+      {/* Hidden caption content for PhotoSwipe */}
+      {postsForGrid.map((post) => (
+        <CaptionContent
           key={`caption-${post.id}`}
-          data-caption-id={post.id}
-          className="hidden-caption-content"
-          style={{ display: 'none' }}
-        >
-          <div style={{
-            padding: '16px',
-            background: 'rgba(0, 0, 0, 0.8)',
-            backdropFilter: 'blur(15px)',
-            borderRadius: '12px',
-            margin: '8px',
-            color: 'white',
-            minWidth: '320px'
-          }}>
-            {/* Tags section */}
-            <div style={{
-              display: 'flex',
-              gap: '4px',
-              justifyContent: 'center',
-              flexWrap: 'wrap',
-              maxWidth: '80vw',
-              marginBottom: '16px'
-            }}>
-              {post.data.tags?.split(' ').filter(Boolean).map((tag, tagIndex) => {
-                const tagColors = getTagColors(tag);
-                const translatedTag = getTagTranslation(tag);
-                return (
-                  <Chip
-                    key={tagIndex}
-                    label={translatedTag}
-                    size="small"
-                    clickable
-                    data-tag={tag}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleTagClick(tag);
-                    }}
-                    sx={{
-                      fontSize: '11px',
-                      height: '20px',
-                      cursor: 'pointer',
-                      backgroundColor: tagColors.backgroundColor,
-                      color: tagColors.color,
-                      border: tagColors.border,
-                      fontFamily: '"Inter", "Roboto", "Noto Sans SC", sans-serif',
-                      fontWeight: 400,
-                      '&:hover': {
-                        backgroundColor: tagColors.hoverColor,
-                      },
-                      '& .MuiChip-label': {
-                        px: 1,
-                        fontFamily: '"Inter", "Roboto", "Noto Sans SC", sans-serif'
-                      }
-                    }}
-                  />
-                );
-              })}
-            </div>
-
-            {/* Info section */}
-            <div style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              gap: '8px',
-              justifyContent: 'center',
-              alignItems: 'center'
-            }}>
-              {/* ID with link */}
-              <Chip
-                icon={<LinkIcon sx={{ color: '#fff !important' }} />}
-                label={
-                  <a
-                    href={`https://konachan.com/post/show/${post.id}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{
-                      color: '#fff',
-                      textDecoration: 'none',
-                      fontFamily: '"Inter", "Roboto", "Noto Sans SC", sans-serif',
-                      fontWeight: 500
-                    }}
-                  >
-                    {post.id}
-                  </a>
-                }
-                size="small"
-                sx={{
-                  backgroundColor: 'rgba(121, 85, 72, 0.8)',
-                  color: '#fff',
-                  fontFamily: '"Inter", "Roboto", "Noto Sans SC", sans-serif',
-                  fontWeight: 500,
-                  '&:hover': {
-                    backgroundColor: 'rgba(121, 85, 72, 1)',
-                  },
-                  '& .MuiChip-label': {
-                    fontFamily: '"Inter", "Roboto", "Noto Sans SC", sans-serif',
-                    fontWeight: 500
-                  }
-                }}
-              />
-
-              {/* File Size */}
-              <Chip
-                icon={<FileIcon sx={{ color: '#fff !important' }} />}
-                label={post.data.jpeg_file_size === 0 ?
-                  formatFileSize(post.data.file_size) :
-                  `${formatFileSize(post.data.jpeg_file_size)} / ${formatFileSize(post.data.file_size)}`
-                }
-                size="small"
-                sx={{
-                  backgroundColor: 'rgba(76, 175, 80, 0.8)',
-                  color: '#fff',
-                  fontFamily: '"Inter", "Roboto", "Noto Sans SC", sans-serif',
-                  fontWeight: 500,
-                  fontSize: '12px',
-                  '& .MuiChip-label': {
-                    fontFamily: '"Inter", "Roboto", "Noto Sans SC", sans-serif',
-                    fontWeight: 500
-                  }
-                }}
-              />
-
-              {/* Dimensions */}
-              <Chip
-                icon={<SizeIcon sx={{ color: '#fff !important' }} />}
-                label={getImageDimensionsText(post.data)}
-                size="small"
-                sx={{
-                  backgroundColor: 'rgba(156, 39, 176, 0.8)',
-                  color: '#fff',
-                  fontFamily: '"Inter", "Roboto", "Noto Sans SC", sans-serif',
-                  fontWeight: 500,
-                  fontSize: '12px',
-                  '& .MuiChip-label': {
-                    fontFamily: '"Inter", "Roboto", "Noto Sans SC", sans-serif',
-                    fontWeight: 500
-                  }
-                }}
-              />
-
-              {/* Score */}
-              <Chip
-                icon={<ScoreIcon sx={{ color: '#fff !important' }} />}
-                label={post.data.score !== undefined ? post.data.score : 'N/A'}
-                size="small"
-                sx={{
-                  backgroundColor: 'rgba(255, 152, 0, 0.8)',
-                  color: '#fff',
-                  fontFamily: '"Inter", "Roboto", "Noto Sans SC", sans-serif',
-                  fontWeight: 500,
-                  fontSize: '12px',
-                  '& .MuiChip-label': {
-                    fontFamily: '"Inter", "Roboto", "Noto Sans SC", sans-serif',
-                    fontWeight: 500
-                  }
-                }}
-              />
-
-              {/* Create Date */}
-              <Chip
-                icon={<DateIcon sx={{ color: '#fff !important' }} />}
-                label={formatDate(post.data.created_at)}
-                size="small"
-                sx={{
-                  backgroundColor: 'rgba(96, 125, 139, 0.8)',
-                  color: '#fff',
-                  fontFamily: '"Inter", "Roboto", "Noto Sans SC", sans-serif',
-                  fontWeight: 500,
-                  fontSize: '12px',
-                  '& .MuiChip-label': {
-                    fontFamily: '"Inter", "Roboto", "Noto Sans SC", sans-serif',
-                    fontWeight: 500
-                  }
-                }}
-              />
-
-              {/* Liked Status - 只显示状态，不提供交互 */}
-              {(postsLikeState.hasOwnProperty(post.id) ? postsLikeState[post.id] : post.liked) && (
-                <Chip
-                  icon={<FavoriteIcon sx={{ color: '#fff !important' }} />}
-                  label="已收藏"
-                  size="small"
-                  sx={{
-                    backgroundColor: 'rgba(244, 67, 54, 0.8)',
-                    color: '#fff',
-                    fontFamily: '"Inter", "Roboto", "Noto Sans SC", sans-serif',
-                    fontWeight: 500,
-                    fontSize: '12px',
-                    '& .MuiChip-label': {
-                      fontFamily: '"Inter", "Roboto", "Noto Sans SC", sans-serif',
-                      fontWeight: 500
-                    }
-                  }}
-                />
-              )}
-            </div>
-          </div>
-        </div>
+          post={post}
+          postsLikeState={postsLikeState}
+          getTagColors={getTagColors}
+          getTagTranslation={getTagTranslation}
+          handleTagClick={handleTagClick}
+        />
       ))}
-
     </AppLayout>
   );
 };

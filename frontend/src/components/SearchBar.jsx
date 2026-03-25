@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Autocomplete, TextField, Box, Chip } from '@mui/material';
 
-const SearchBar = ({ onSearch, searchQuery, onClearSearch, totalPosts, availableTags = [], showLikedOnly = false }) => {
+const SearchBar = ({ onSearch, searchQuery, onClearSearch, totalPosts, availableTags = [] }) => {
   const [inputValue, setInputValue] = useState('');
 
   const handleInputChange = (event, newInputValue) => {

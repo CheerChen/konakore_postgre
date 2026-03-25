@@ -2,7 +2,7 @@ import React from 'react';
 import Masonry from '@mui/lab/Masonry';
 import { Box, Fade, Zoom } from '@mui/material';
 
-const MasonryGrid = ({ posts, onImageClick, LazyImageCard, isLoading, onLikeChange }) => {
+const MasonryGrid = ({ posts, onImageClick, LazyImageCard, isLoading, onLikeChange, groupMap }) => {
   // 使用传入的LazyImageCard组件
   const CardComponent = LazyImageCard;
 
@@ -73,6 +73,7 @@ const MasonryGrid = ({ posts, onImageClick, LazyImageCard, isLoading, onLikeChan
                   index={index}
                   onImageClick={onImageClick}
                   onLikeChange={onLikeChange}
+                  groupCount={groupMap?.get(post.id)?.length || 0}
                 />
               </Box>
             </Zoom>

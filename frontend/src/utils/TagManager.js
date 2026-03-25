@@ -1,4 +1,4 @@
-import { getTags, getLikedPosts } from '../api';
+import { getTags, getRelevanceWeights } from '../api';
 
 // Tag类型常量定义
 export const TAG_TYPES = {
@@ -116,10 +116,10 @@ class TagManager {
       tagInfo: new Map(),                 // 原 globalTagInfoCache  
       translations: null,                 // 原 globalTagTranslations
       translationObserver: null,          // MutationObserver实例
-      likedPosts: null,                   // 用户收藏的posts数据（用于TF-IDF）
-      likedPostsLastFetch: null,          // 上次获取liked posts的时间
       preferencesLastFetch: null,         // 上次获取偏好数据的时间（已废弃，保留兼容）
-      isFetchingLikedPosts: false,        // 防止重复请求liked posts
+      relevanceWeights: null,             // 后端计算的 TF-IDF weight map
+      relevanceWeightsLastFetch: null,    // 上次获取 weights 的时间
+      isFetchingWeights: false,           // 防止重复请求 weights
       isFetchingTranslations: false,      // 防止重复请求翻译文件
 
       excludedPostTagsConfig: {
@@ -401,99 +401,46 @@ class TagManager {
   // ===== 用户偏好管理 =====
 
   /**
-   * 获取用户收藏的posts数据（用于TF-IDF学习）
-   * @param {boolean} forceRefresh - 是否强制刷新数据
+   * 从后端获取 TF-IDF 权重（替代前端 learnTfIdf）
+   * @param {boolean} forceRefresh - 是否强制刷新
+   * @returns {Map} tag -> weight 权重映射
    */
-  async fetchLikedPosts(forceRefresh = false) {
-    // 如果正在请求，则直接返回，避免重复
-    if (this.state.isFetchingLikedPosts) {
-      console.warn('Fetch liked posts already in progress.');
-      return this.state.likedPosts;
+  async fetchRelevanceWeights(forceRefresh = false) {
+    if (this.state.isFetchingWeights) {
+      return this.state.relevanceWeights;
+    }
+
+    const now = Date.now();
+    const cacheTime = 30 * 60 * 1000; // 30 minutes
+
+    if (!forceRefresh &&
+      this.state.relevanceWeights &&
+      this.state.relevanceWeightsLastFetch &&
+      (now - this.state.relevanceWeightsLastFetch) < cacheTime) {
+      return this.state.relevanceWeights;
     }
 
     try {
-      // 检查是否需要刷新数据（缓存30分钟）
-      const now = Date.now();
-      const cacheTime = 30 * 60 * 1000; // 30分钟
+      this.state.isFetchingWeights = true;
+      const response = await getRelevanceWeights();
 
-      if (!forceRefresh &&
-        this.state.likedPosts &&
-        this.state.likedPostsLastFetch &&
-        (now - this.state.likedPostsLastFetch) < cacheTime) {
-        return this.state.likedPosts;
-      }
+      // Convert plain object to Map
+      const weightMap = new Map(Object.entries(response.weights).map(
+        ([tag, weight]) => [tag, weight]
+      ));
 
-      this.state.isFetchingLikedPosts = true; // 设置状态锁
+      this.state.relevanceWeights = weightMap;
+      this.state.relevanceWeightsLastFetch = now;
 
-      const response = await getLikedPosts(1, 3000, 'tags,score,rating');
+      console.log(`✅ Loaded ${weightMap.size} relevance weights from backend`);
 
-      this.state.likedPosts = response.posts;
-      this.state.likedPostsLastFetch = now;
-
-      this.notify({
-        type: 'liked-posts-updated',
-        data: {
-          count: response.posts.length,
-          total: response.pagination.total_items
-        }
-      });
-
-      console.log(`✅ Loaded ${response.posts.length} liked posts for TF-IDF learning`);
-
-      return this.state.likedPosts;
+      return weightMap;
     } catch (error) {
-      console.warn('Failed to fetch liked posts:', error);
-      return null;
+      console.warn('Failed to fetch relevance weights:', error);
+      return this.state.relevanceWeights || new Map();
     } finally {
-      this.state.isFetchingLikedPosts = false; // 释放状态锁
+      this.state.isFetchingWeights = false;
     }
-  }
-
-  /**
-   * 学习用户偏好，构建TF-IDF权重模型
-   * 使用 sublinear TF: (1 + ln(tf)) × ln(N/df) × typeWeight
-   * @param {Array} likedPosts - 用户喜欢的posts（来自API）
-   * @param {number} totalPosts - 总post数量
-   * @returns {Map} tag -> weight 权重映射
-   */
-  learnTfIdf(likedPosts, totalPosts = 400000) {
-    if (!likedPosts?.length) return new Map();
-
-    // 计算 TF：每个 tag 在 liked posts 中出现的篇数（每篇 post 只算 1 次）
-    const tf = new Map();
-
-    likedPosts.forEach(post => {
-      const tagsString = post.tags ?? post.data?.tags ?? '';
-      if (typeof tagsString !== 'string') return;
-
-      const tags = tagsString.split(' ').filter(Boolean);
-      const seen = new Set();
-      tags.forEach(tag => {
-        if (seen.has(tag)) return;
-        seen.add(tag);
-        if (!isTagmeTag(tag)) {
-          tf.set(tag, (tf.get(tag) || 0) + 1);
-        }
-      });
-    });
-
-    // 构建 weightMap
-    const weightMap = new Map();
-
-    tf.forEach((count, tag) => {
-      const tagInfo = this.state.tagInfo.get(tag);
-      if (!tagInfo) return;
-
-      const df = Math.max(tagInfo.count || 1, 1);
-      const tagType = tagInfo.type ?? 0;
-      const typeWeight = TFIDF_HYBRID_CONFIG.typeWeights[tagType] ?? 1.0;
-
-      // sublinear TF × IDF × typeWeight
-      const weight = (1 + Math.log(count)) * Math.log(totalPosts / df) * typeWeight;
-      if (weight > 0) weightMap.set(tag, weight);
-    });
-
-    return weightMap;
   }
 
   /**
@@ -508,208 +455,6 @@ class TagManager {
 
     const tags = tagsString.split(' ').filter(Boolean);
     return tags.reduce((sum, tag) => sum + (weightMap.get(tag) || 0), 0);
-  }
-
-  /**
-   * 计算当前 posts 的相关度分数分布（直方图数据）
-   * @param {Array} posts - 当前页 posts
-   * @param {number} totalPosts - 总 post 数量
-   * @param {number} buckets - 分桶数
-   * @returns {{ histogram: Array, scores: Map, weightMap: Map }}
-   */
-  computeScoreDistribution(posts, totalPosts = 400000, buckets = 30) {
-    const empty = { histogram: [], scores: new Map(), weightMap: new Map() };
-    if (!this.state.likedPosts?.length || !posts?.length) return empty;
-
-    const weightMap = this.learnTfIdf(this.state.likedPosts, totalPosts);
-    const scores = new Map();
-
-    posts.forEach(post => {
-      scores.set(post.id, this.scorePost(post, weightMap));
-    });
-
-    const positiveScores = [...scores.values()].filter(s => s > 0);
-    if (!positiveScores.length) return { histogram: [], scores, weightMap };
-
-    const max = Math.max(...positiveScores);
-    if (max === 0) return { histogram: [], scores, weightMap };
-
-    const width = max / buckets;
-    const histogram = Array.from({ length: buckets }, (_, i) => ({
-      min: +(i * width).toFixed(2),
-      max: +((i + 1) * width).toFixed(2),
-      count: 0,
-    }));
-
-    positiveScores.forEach(s => {
-      const idx = Math.min(Math.floor(s / width), buckets - 1);
-      histogram[idx].count++;
-    });
-
-    return { histogram, scores, weightMap };
-  }
-
-  /**
-   * 按相关度阈值过滤 posts（不改变顺序）
-   * @param {Array} posts - posts 数组
-   * @param {number} totalPosts - 总 post 数量
-   * @returns {{ filtered: Array, removedCount: number }}
-   */
-  filterByRelevance(posts, totalPosts = 400000) {
-    const { threshold } = this.state.relevanceFilterConfig || {};
-    if (!threshold || threshold <= 0 || !posts?.length) {
-      return { filtered: posts, removedCount: 0 };
-    }
-
-    if (!this.state.likedPosts?.length) {
-      return { filtered: posts, removedCount: 0 };
-    }
-
-    const weightMap = this.learnTfIdf(this.state.likedPosts, totalPosts);
-    let removedCount = 0;
-
-    const filtered = posts.filter(post => {
-      const score = this.scorePost(post, weightMap);
-      if (score < threshold) {
-        removedCount++;
-        return false;
-      }
-      return true;
-    });
-
-    return { filtered, removedCount };
-  }
-
-  /**
-   * 计算单个post的TF-IDF混合分数
-   * @param {Object} post - post对象
-   * @param {Map} tfIdfWeights - TF-IDF权重映射
-   * @returns {Object} 包含各项分数的对象
-   */
-  calculateTfIdfHybridScore(post, tfIdfWeights) {
-    const scores = {
-      profile: 0,
-      quality: 0,
-      curation: 0,
-      final: 0
-    };
-
-    // 1. Profile Score (TF-IDF)
-    if (post.data?.tags && typeof post.data.tags === 'string') {
-      const tags = post.data.tags.split(' ').filter(Boolean);
-      if (tags.length > 0) {
-        let totalWeight = 0;
-        tags.forEach(tag => {
-          const weight = tfIdfWeights.get(tag) || 0;
-          if (weight > 0) {
-            totalWeight += weight;
-            if (!post.alg) post.alg = {};
-            post.alg[tag] = weight;
-          }
-        });
-        scores.profile = totalWeight / tags.length;
-      }
-    }
-
-    // 2. Quality Score (log1p of score)
-    scores.quality = Math.log1p(post.data?.score || 0);
-
-    // 3. Curation Score (rating mapping)
-    const rating = post.data?.rating || 's';
-    scores.curation = TFIDF_HYBRID_CONFIG.curationMap[rating] || TFIDF_HYBRID_CONFIG.curationMap['s'];
-
-    return scores;
-  }
-
-  /**
-   * 使用TF-IDF混合算法对posts数组排序
-   * @param {Array} posts - posts数组
-   * @param {string} order - 排序方向 'desc' | 'asc'
-   * @param {number} totalPosts - 总数据数量
-   * @returns {Array} 排序后的posts数组
-   */
-  sortPostsByTfIdfHybrid(posts, order = 'desc', totalPosts = 400000) {
-    if (!posts?.length) return posts;
-
-    // 先过滤掉被排除标签命中的 posts
-    const filteredPosts = this.filterPosts(posts);
-    if (!filteredPosts?.length) return filteredPosts;
-
-    // 确保有liked posts数据
-    if (!this.state.likedPosts) {
-      console.warn('No liked posts loaded for TF-IDF hybrid sorting');
-      return posts;
-    }
-
-    // 获取用户收藏的posts用于学习
-    const likedPosts = this.state.likedPosts;
-    if (!likedPosts?.length) {
-      console.warn('No liked posts found for TF-IDF learning');
-      return posts;
-    }
-
-    // 学习TF-IDF模型
-    const tfIdfWeights = this.learnTfIdf(likedPosts, totalPosts);
-
-    // 第一遍：计算原始分数并找到最大值
-    const rawScores = [];
-    let maxProfile = 0, maxQuality = 0, maxCuration = 0;
-
-    filteredPosts.forEach((post, index) => {
-      const scores = this.calculateTfIdfHybridScore(post, tfIdfWeights);
-      rawScores[index] = scores;
-
-      maxProfile = Math.max(maxProfile, scores.profile);
-      maxQuality = Math.max(maxQuality, scores.quality);
-      maxCuration = Math.max(maxCuration, scores.curation);
-    });
-
-    // 第二遍：归一化并计算最终分数
-    const postsWithScores = filteredPosts.map((post, index) => {
-      const raw = rawScores[index];
-
-      const normProfile = maxProfile > 0 ? raw.profile / maxProfile : 0;
-      const normQuality = maxQuality > 0 ? raw.quality / maxQuality : 0;
-      const normCuration = maxCuration > 0 ? raw.curation / maxCuration : 0;
-
-      const finalScore = TFIDF_HYBRID_CONFIG.profileWeight * normProfile +
-        TFIDF_HYBRID_CONFIG.qualityWeight * normQuality +
-        TFIDF_HYBRID_CONFIG.curationWeight * normCuration;
-
-      // 存储详细分数用于调试
-      if (!post.alg) post.alg = {};
-      post.alg.profile_score = normProfile;
-      post.alg.quality_score = normQuality;
-      post.alg.curation_score = normCuration;
-
-      return {
-        ...post,
-        myScore: finalScore
-      };
-    });
-
-    // 排序：按最终分数排序
-    postsWithScores.sort((a, b) => {
-      if (order === 'asc') {
-        return a.myScore - b.myScore;
-      } else {
-        return b.myScore - a.myScore;
-      }
-    });
-
-    // 调试信息
-    if (postsWithScores.length > 0) {
-      const topPosts = postsWithScores.slice(0, 5);
-      console.log('🎯 TF-IDF混合排序结果 (前5个):', topPosts.map(p => ({
-        id: p.id,
-        myScore: p.myScore,
-        profile: p.alg?.profile_score,
-        quality: p.alg?.quality_score,
-        curation: p.alg?.curation_score,
-      })));
-    }
-
-    return postsWithScores;
   }
 
   sortPosts(posts, compareFn) {

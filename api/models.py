@@ -218,6 +218,14 @@ class ListLikedPostsResponse(BaseModel):
     pagination: PaginationInfo
 
 
+class RelevanceWeightsResponse(BaseModel):
+    """Response model for user relevance weights (TF-IDF)."""
+    weights: Dict[str, float] = Field(..., description="Tag name -> TF-IDF weight")
+    total_posts: int = Field(..., description="Total posts count used for IDF")
+    liked_posts_count: int = Field(..., description="Number of liked posts used for TF")
+    generated_at: float = Field(..., description="Unix timestamp of generation")
+
+
 class ErrorDetail(BaseModel):
     """Error detail structure following AIP-193."""
     code: str

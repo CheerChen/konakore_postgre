@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Card, CardMedia, IconButton, Box, Skeleton, Fade, Grow, Snackbar, Alert } from '@mui/material';
 import FavoriteBorderIcon from '@mui/icons-material/FavoriteBorder';
 import FavoriteIcon from '@mui/icons-material/Favorite';
@@ -10,31 +10,34 @@ import { toggleLike } from '../api';
 import { getImageUrl } from '../utils/imageUtils';
 import { connectivityService } from '../utils/ConnectivityService';
 
-const LazyImageCard = ({ post, index, onImageClick, onLikeChange }) => {
+const LazyImageCard = ({ post, index, onImageClick, onLikeChange, groupCount }) => {
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageError, setImageError] = useState(false);
   const [isLiked, setIsLiked] = useState(post.liked);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
   const [shouldLoadImage, setShouldLoadImage] = useState(false);
   const [isOffline, setIsOffline] = useState(!connectivityService.isOnline);
+  const imgRef = useRef(null);
 
   // 懒加载监听
   const { ref, inView } = useInView({
-    triggerOnce: false,
     threshold: 0,
-    rootMargin: '400px 0px'
+    rootMargin: '600px 0px'
   });
 
-  // 防抖加载逻辑
+  // 进入视口即加载
   useEffect(() => {
-    let timerId;
-    if (inView && !shouldLoadImage) {
-      timerId = setTimeout(() => {
-        setShouldLoadImage(true);
-      }, 200);
+    if (inView) {
+      setShouldLoadImage(true);
     }
-    return () => clearTimeout(timerId);
-  }, [inView, shouldLoadImage]);
+  }, [inView]);
+
+  // 缓存命中时 onLoad 可能在 React 挂载前就触发了，用 img.complete 兜底
+  useEffect(() => {
+    if (shouldLoadImage && !imageLoaded && !imageError && imgRef.current?.complete && imgRef.current.naturalWidth > 0) {
+      setImageLoaded(true);
+    }
+  });
 
   // 监听连通性服务
   useEffect(() => {
@@ -126,38 +129,43 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange }) => {
       >
         {shouldLoadImage ? (
           <>
-            {(!imageLoaded && !imageError) && (
-              <Skeleton
-                variant="rectangular"
-                width="100%"
-                height="100%"
-                animation="wave"
+            {/* img 始终正常布局占位，Skeleton 绝对定位覆盖其上 */}
+            {!imageError && (
+              <CardMedia
+                ref={imgRef}
+                component="img"
+                decoding="async"
+                image={imageUrl}
+                alt="image"
+                onClick={() => onImageClick(index)}
+                onLoad={handleImageLoad}
+                onError={handleImageError}
+                sx={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                  opacity: imageLoaded ? 1 : 0,
+                  cursor: 'pointer',
+                  transition: 'opacity 0.6s ease, transform 0.3s ease',
+                  '&:hover': {
+                    transform: 'scale(1.02)',
+                  }
+                }}
               />
             )}
 
-            {!imageError && (
-              <Fade in={imageLoaded} timeout={600}>
-                <CardMedia
-                  component="img"
-                  decoding="async"
-                  image={imageUrl}
-                  alt="image"
-                  onClick={() => onImageClick(index)}
-                  onLoad={handleImageLoad}
-                  onError={handleImageError}
-                  sx={{
-                    display: imageLoaded ? 'block' : 'none',
-                    width: '100%',
-                    height: '100%',
-                    objectFit: 'cover',
-                    cursor: 'pointer',
-                    transition: 'transform 0.3s ease',
-                    '&:hover': {
-                      transform: 'scale(1.02)',
-                    }
-                  }}
-                />
-              </Fade>
+            {(!imageLoaded && !imageError) && (
+              <Skeleton
+                variant="rectangular"
+                animation="wave"
+                sx={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  height: '100%',
+                }}
+              />
             )}
 
             {imageError && (
@@ -218,6 +226,31 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange }) => {
                 </IconButton>
               </Box>
             </Fade>
+
+            {/* 分组数量 badge */}
+            {groupCount > 1 && imageLoaded && (
+              <Fade in={true} timeout={800}>
+                <Box
+                  sx={{
+                    position: 'absolute',
+                    top: 8,
+                    left: 8,
+                    backgroundColor: 'rgba(255, 160, 0, 0.9)',
+                    color: '#fff',
+                    borderRadius: '12px',
+                    px: 1,
+                    py: 0.25,
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    lineHeight: 1.4,
+                    fontFamily: '"Inter", "Roboto", sans-serif',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+                  }}
+                >
+                  {groupCount}
+                </Box>
+              </Fade>
+            )}
           </>
         ) : (
           <Skeleton
