@@ -21,7 +21,6 @@ import {
     Cell,
 } from 'recharts';
 
-import { tagManager } from '../utils/TagManager';
 
 export default function RelevanceFilterModal({
     open,
@@ -104,16 +103,16 @@ export default function RelevanceFilterModal({
         onThresholdChange?.(0);
     };
 
-    const hasLikedPosts = Boolean(tagManager.state.likedPosts?.length);
+    const hasWeights = postScoresMap.size > 0;
 
     return (
         <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
             <DialogTitle>相关度过滤</DialogTitle>
             <DialogContent>
                 <Stack spacing={2} sx={{ mt: 1 }}>
-                    {!hasLikedPosts ? (
+                    {!hasWeights ? (
                         <Typography variant="body2" color="warning.main">
-                            尚未加载收藏数据，无法计算相关度。请等待初始化完成后重试。
+                            尚未加载相关度权重数据。请等待初始化完成后重试。
                         </Typography>
                     ) : (
                         <>

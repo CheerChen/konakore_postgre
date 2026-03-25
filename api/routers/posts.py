@@ -12,6 +12,7 @@ from models import (
     db_post_to_api
 )
 from utils import get_db_connection, trigger_file_sync
+from routers.users import _invalidate_relevance_cache
 
 router = APIRouter(prefix="/v1/posts", tags=["posts"])
 logger = logging.getLogger(__name__)
@@ -197,7 +198,8 @@ def like_post(post_id: int):
                     (post_id,)
                 )
                 conn.commit()
-                
+                _invalidate_relevance_cache()
+
                 # Trigger file_sync service for newly liked post
                 trigger_success = trigger_file_sync("start")
                 if trigger_success:
@@ -239,7 +241,8 @@ def unlike_post(post_id: int):
                     (post_id,)
                 )
                 conn.commit()
-            
+                _invalidate_relevance_cache()
+
             return ToggleLikeResponse(
                 post_id=post_id,
                 liked=False,

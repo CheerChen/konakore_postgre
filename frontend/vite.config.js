@@ -11,7 +11,7 @@ export default defineConfig({
     proxy: {
       // 代理 API 请求到后端服务
       '/api': {
-        target: 'http://192.168.0.110:3000',
+        target: 'http://api:3000',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ''),
       },
@@ -29,9 +29,9 @@ export default defineConfig({
   // 开发环境配置 (npm run dev)
   server: {
     proxy: {
-      // 代理 API 请求到后端服务（开发环境）
+      // 代理 API 请求到NAS后端服务（开发环境）
       '/api': {
-        target: 'http://192.168.0.110:3000',
+        target: 'http://192.168.0.110:3001',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ''),
       },
