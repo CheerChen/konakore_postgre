@@ -4,6 +4,7 @@ import {
   Pagination,
   Typography
 } from '@mui/material';
+import { useTranslation } from 'react-i18next';
 
 const SimplePagination = ({
   currentPage,
@@ -12,6 +13,8 @@ const SimplePagination = ({
   isLoading = false
 }) => {
   // 只在有多页时显示
+  const { t } = useTranslation();
+
   if (!totalPages || totalPages <= 1) {
     return null;
   }
@@ -43,7 +46,7 @@ const SimplePagination = ({
 
       {/* 页面信息 */}
       <Typography variant="caption" color="text.secondary">
-        第 {currentPage} 页，共 {totalPages} 页
+        {t('pagination.pageInfo', { current: currentPage, total: totalPages })}
       </Typography>
     </Box>
   );

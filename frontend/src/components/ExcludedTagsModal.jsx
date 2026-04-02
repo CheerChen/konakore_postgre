@@ -13,9 +13,11 @@ import {
     Typography
 } from '@mui/material';
 
+import { useTranslation } from 'react-i18next';
 import { tagManager } from '../utils/TagManager';
 
 export default function ExcludedTagsModal({ open, onClose, excludedTags = [], onExcludedTagsChange, excludedCountOnPage = 0 }) {
+    const { t } = useTranslation();
     const [inputValue, setInputValue] = useState('');
     const [suggestions, setSuggestions] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
@@ -79,16 +81,16 @@ export default function ExcludedTagsModal({ open, onClose, excludedTags = [], on
 
     return (
         <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-            <DialogTitle>排除标签（过滤 Post）</DialogTitle>
+            <DialogTitle>{t('filter.excludedTagsTitle')}</DialogTitle>
             <DialogContent>
                 <Stack spacing={2} sx={{ mt: 1 }}>
                     <Typography variant="body2" color="text.secondary">
-                        包含下列标签的 post 会被隐藏。添加或删除标签即时生效。
+                        {t('filter.excludedTagsDesc')}
                     </Typography>
 
                     {excludedCountOnPage > 0 && (
                         <Typography variant="body2" color="warning.main">
-                            本页已过滤 {excludedCountOnPage} 条
+                            {t('filter.excludedTagsFiltered', { count: excludedCountOnPage })}
                         </Typography>
                     )}
 
@@ -130,8 +132,8 @@ export default function ExcludedTagsModal({ open, onClose, excludedTags = [], on
                         renderInput={(params) => (
                             <TextField
                                 {...params}
-                                label="要排除的标签"
-                                placeholder="输入标签名称（可多选）"
+                                label={t('filter.excludedTagsInput')}
+                                placeholder={t('filter.excludedTagsPlaceholder')}
                             />
                         )}
                         fullWidth
@@ -140,10 +142,10 @@ export default function ExcludedTagsModal({ open, onClose, excludedTags = [], on
             </DialogContent>
             <DialogActions>
                 <Button onClick={handleClear} color="inherit" disabled={normalizedTags.length === 0}>
-                    清空
+                    {t('actions.clear')}
                 </Button>
                 <Button onClick={onClose} variant="contained">
-                    关闭
+                    {t('actions.close')}
                 </Button>
             </DialogActions>
         </Dialog>

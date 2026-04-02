@@ -241,6 +241,31 @@ class ApiIndexResponse(BaseModel):
     examples: Dict[str, str]
 
 
+class StatsDistributionBucket(BaseModel):
+    """A single bucket in the ID distribution histogram."""
+    id_start: int
+    id_end: int
+    total_count: int
+    liked_count: int
+
+
+class StatsRatingBreakdown(BaseModel):
+    """Rating counts for all posts and liked posts."""
+    rating: str = Field(..., description="Content rating: s (safe), q (questionable), e (explicit)")
+    total_count: int
+    liked_count: int
+
+
+class StatsOverviewResponse(BaseModel):
+    """Response model for stats overview endpoint."""
+    total_posts: int
+    total_liked: int
+    ratio: float
+    buckets: List[StatsDistributionBucket]
+    ratings: List[StatsRatingBreakdown]
+    generated_at: float
+
+
 # ============================================================================
 # Helper Functions
 # ============================================================================

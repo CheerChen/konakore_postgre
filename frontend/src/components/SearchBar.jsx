@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { Autocomplete, TextField, Box, Chip } from '@mui/material';
+import { useTranslation } from 'react-i18next';
 
 const SearchBar = ({ onSearch, searchQuery, onClearSearch, totalPosts, availableTags = [] }) => {
+  const { t } = useTranslation();
   const [inputValue, setInputValue] = useState('');
 
   const handleInputChange = (event, newInputValue) => {
@@ -96,9 +98,9 @@ const SearchBar = ({ onSearch, searchQuery, onClearSearch, totalPosts, available
         renderInput={(params) => (
           <TextField
             {...params}
-            label={searchQuery ? "" : "搜索标签..."}
+            label={searchQuery ? "" : t('search.label')}
             variant="outlined"
-            placeholder={searchQuery ? "输入新标签搜索" : "输入标签名称"}
+            placeholder={searchQuery ? t('search.placeholderWithQuery') : t('search.placeholder')}
             onKeyDown={handleKeyDown}
             helperText=""
           />
