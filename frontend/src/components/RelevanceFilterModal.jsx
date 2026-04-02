@@ -10,6 +10,7 @@ import {
     Stack,
     Typography,
 } from '@mui/material';
+import { useTranslation } from 'react-i18next';
 import {
     BarChart,
     Bar,
@@ -31,6 +32,7 @@ export default function RelevanceFilterModal({
     onThresholdChange,
     postScoresMap = new Map(),
 }) {
+    const { t } = useTranslation();
     // 本地 sliderValue 控制滑块视觉位置（紧急更新，不阻塞）
     const [sliderValue, setSliderValue] = useState(threshold);
 
@@ -107,17 +109,17 @@ export default function RelevanceFilterModal({
 
     return (
         <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-            <DialogTitle>相关度过滤</DialogTitle>
+            <DialogTitle>{t('filter.relevanceFilterTitle')}</DialogTitle>
             <DialogContent>
                 <Stack spacing={2} sx={{ mt: 1 }}>
                     {!hasWeights ? (
                         <Typography variant="body2" color="warning.main">
-                            尚未加载相关度权重数据。请等待初始化完成后重试。
+                            {t('filter.relevanceNoWeights')}
                         </Typography>
                     ) : (
                         <>
                             <Typography variant="body2" color="text.secondary">
-                                拖动滑块设置阈值，本页低于阈值的 post 将被隐藏。即时生效。
+                                {t('filter.relevanceFilterDesc')}
                             </Typography>
 
                             {/* 直方图 */}
@@ -128,7 +130,7 @@ export default function RelevanceFilterModal({
                                         color="text.secondary"
                                         sx={{ mb: 0.5, display: 'block' }}
                                     >
-                                        当前页分布（Y 轴 log scale）
+                                        {t('filter.relevanceDistribution')}
                                     </Typography>
                                     <ResponsiveContainer width="100%" height="100%">
                                         <BarChart
@@ -149,12 +151,12 @@ export default function RelevanceFilterModal({
                                             />
                                             <Tooltip
                                                 formatter={(value, name, props) => [
-                                                    `${props.payload.count} 篇`,
-                                                    '数量',
+                                                    t('filter.relevanceCount', { count: props.payload.count }),
+                                                    t('filter.relevanceCountLabel'),
                                                 ]}
                                                 labelFormatter={(label, payload) =>
                                                     payload?.[0]
-                                                        ? `分数区间: ${payload[0].payload.range}`
+                                                        ? t('filter.relevanceScoreRange', { range: payload[0].payload.range })
                                                         : label
                                                 }
                                             />
@@ -168,7 +170,7 @@ export default function RelevanceFilterModal({
                                                 strokeWidth={2}
                                                 strokeDasharray="4 2"
                                                 label={{
-                                                    value: '阈值',
+                                                    value: t('filter.relevanceThresholdLabel'),
                                                     position: 'top',
                                                     fill: '#f44336',
                                                     fontSize: 12,
@@ -191,16 +193,18 @@ export default function RelevanceFilterModal({
                                 </Box>
                             ) : (
                                 <Typography variant="body2" color="text.secondary">
-                                    当前页无可计算的相关度分数（tagInfo 可能未加载）。
+                                    {t('filter.relevanceNoScores')}
                                 </Typography>
                             )}
 
                             {/* 阈值滑块 */}
                             <Box sx={{ px: 1 }}>
                                 <Typography variant="body2" gutterBottom>
-                                    阈值 ≥ {sliderValue.toFixed(1)}：保留{' '}
-                                    <strong>{filteredStats.pass}</strong> 篇，过滤{' '}
-                                    <strong>{filteredStats.removed}</strong> 篇
+                                    {t('filter.relevanceThreshold', {
+                                        value: sliderValue.toFixed(1),
+                                        pass: filteredStats.pass,
+                                        removed: filteredStats.removed
+                                    })}
                                 </Typography>
                                 <Slider
                                     value={sliderValue}
@@ -222,10 +226,10 @@ export default function RelevanceFilterModal({
             </DialogContent>
             <DialogActions>
                 <Button onClick={handleReset} color="inherit" disabled={threshold === 0}>
-                    重置
+                    {t('actions.reset')}
                 </Button>
                 <Button onClick={onClose} variant="contained">
-                    关闭
+                    {t('actions.close')}
                 </Button>
             </DialogActions>
         </Dialog>

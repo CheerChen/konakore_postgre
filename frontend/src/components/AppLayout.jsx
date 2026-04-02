@@ -1,12 +1,20 @@
 import React from 'react';
-import { AppBar, Toolbar, Container, Box, Tab, Tabs } from '@mui/material';
-import { PhotoLibrary as GalleryIcon, Favorite as FavoriteIcon } from '@mui/icons-material';
+import { AppBar, Toolbar, Container, Box, Tab, Tabs, IconButton, Tooltip } from '@mui/material';
+import { PhotoLibrary as GalleryIcon, Favorite as FavoriteIcon, BarChart as StatsIcon, Translate as TranslateIcon } from '@mui/icons-material';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 
 const AppLayout = ({ children }) => {
   const location = useLocation();
   const navigate = useNavigate();
-  const currentTab = location.pathname === '/favorites' ? '/favorites' : '/';
+  const { t, i18n } = useTranslation();
+  const currentTab = ['/favorites', '/stats'].includes(location.pathname) ? location.pathname : '/';
+
+  const toggleLanguage = () => {
+    const newLang = i18n.language === 'zh-CN' ? 'en' : 'zh-CN';
+    i18n.changeLanguage(newLang);
+    localStorage.setItem('konakore_language', newLang);
+  };
 
   return (
     <Box sx={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -23,18 +31,31 @@ const AppLayout = ({ children }) => {
               <Tab
                 icon={<GalleryIcon sx={{ fontSize: 20 }} />}
                 iconPosition="start"
-                label="Gallery"
+                label={t('nav.gallery')}
                 value="/"
                 sx={{ minHeight: 48, textTransform: 'none', fontWeight: 500 }}
               />
               <Tab
                 icon={<FavoriteIcon sx={{ fontSize: 20 }} />}
                 iconPosition="start"
-                label="Favorites"
+                label={t('nav.favorites')}
                 value="/favorites"
                 sx={{ minHeight: 48, textTransform: 'none', fontWeight: 500 }}
               />
+              <Tab
+                icon={<StatsIcon sx={{ fontSize: 20 }} />}
+                iconPosition="start"
+                label={t('nav.stats')}
+                value="/stats"
+                sx={{ minHeight: 48, textTransform: 'none', fontWeight: 500 }}
+              />
             </Tabs>
+            <Box sx={{ flexGrow: 1 }} />
+            <Tooltip title={i18n.language === 'zh-CN' ? 'English' : '中文'}>
+              <IconButton onClick={toggleLanguage} size="small" sx={{ ml: 1 }}>
+                <TranslateIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
           </Toolbar>
         </Container>
       </AppBar>

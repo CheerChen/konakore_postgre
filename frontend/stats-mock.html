@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stats Tab Mock</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #121212; color: #e0e0e0; font-family: 'Roboto', 'Noto Sans SC', system-ui, sans-serif; padding: 24px; max-width: 1200px; margin: 0 auto; }
+  h2 { font-size: 20px; font-weight: 500; margin-bottom: 20px; color: #fff; }
+  h3 { font-size: 14px; font-weight: 400; color: #aaa; margin-bottom: 8px; }
+  .section { margin-bottom: 48px; }
+  .tooltip { position: fixed; background: rgba(0,0,0,0.92); color: #fff; padding: 10px 14px; border-radius: 8px; font-size: 12px; pointer-events: none; z-index: 1000; display: none; line-height: 1.7; border: 1px solid #333; }
+
+  /* === Summary Cards === */
+  .summary { display: flex; gap: 16px; margin-bottom: 36px; flex-wrap: wrap; }
+  .card { background: #1e1e1e; border-radius: 12px; padding: 20px 24px; flex: 1; min-width: 140px; }
+  .card-value { font-size: 28px; font-weight: 700; color: #B388FF; }
+  .card-label { font-size: 13px; color: #888; margin-top: 4px; }
+  .card-value.secondary { color: #FF9E40; }
+  .card-value.ratio { color: #69F0AE; }
+
+  /* === Heat Strip === */
+  .heat-strip { display: flex; height: 28px; border-radius: 6px; overflow: hidden; cursor: crosshair; }
+  .heat-cell { flex: 1; transition: opacity 0.15s; }
+  .heat-cell:hover { opacity: 0.75; }
+  .axis-labels { display: flex; justify-content: space-between; margin-top: 4px; font-size: 11px; color: #555; }
+
+  /* === Bar Chart === */
+  .legend { display: flex; gap: 16px; margin-bottom: 10px; font-size: 12px; color: #aaa; }
+  .legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+  .chart { display: flex; align-items: flex-end; height: 180px; gap: 1px; }
+  .bar-group { flex: 1; height: 100%; position: relative; cursor: crosshair; }
+  .bar-total { width: 100%; background: #2a2a2a; border-radius: 2px 2px 0 0; position: absolute; bottom: 0; }
+  .bar-liked { width: 100%; background: #7C4DFF; border-radius: 2px 2px 0 0; position: absolute; bottom: 0; z-index: 1; }
+  .bar-group:hover .bar-total { background: #3a3a3a; }
+  .bar-group:hover .bar-liked { background: #B388FF; }
+
+  /* === Rating Breakdown (stacked bars) === */
+  .rating-card { background: #1e1e1e; border-radius: 12px; padding: 20px; }
+  .rating-card h4 { font-size: 13px; font-weight: 400; color: #888; margin-bottom: 12px; }
+  .rating-bars { display: flex; flex-direction: column; gap: 12px; }
+  .rating-bar-row { display: flex; align-items: center; gap: 12px; }
+  .rating-bar-label { font-size: 13px; color: #aaa; width: 70px; flex-shrink: 0; }
+  .rating-bar-track { flex: 1; height: 28px; border-radius: 6px; overflow: hidden; display: flex; cursor: crosshair; }
+  .rating-bar-seg { height: 100%; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #fff; font-weight: 500; transition: opacity 0.15s; }
+  .rating-bar-seg:hover { opacity: 0.8; }
+
+  /* === Top Rankings === */
+  .rankings { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; }
+  .ranking-card { background: #1e1e1e; border-radius: 12px; padding: 20px; }
+  .ranking-card h3 { margin-bottom: 14px; color: #ccc; font-size: 14px; }
+  .rank-item { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .rank-num { font-size: 12px; color: #555; width: 20px; text-align: right; font-weight: 700; }
+  .rank-bar-bg { flex: 1; height: 22px; background: #2a2a2a; border-radius: 4px; overflow: hidden; position: relative; }
+  .rank-bar-fill { height: 100%; border-radius: 4px; display: flex; align-items: center; padding-left: 8px; font-size: 11px; color: #fff; font-weight: 500; white-space: nowrap; min-width: fit-content; }
+  .rank-count { font-size: 11px; color: #777; width: 36px; text-align: right; }
+</style>
+</head>
+<body>
+
+<h2>Stats</h2>
+
+<!-- Summary Cards -->
+<div class="summary">
+  <div class="card">
+    <div class="card-value">320,847</div>
+    <div class="card-label">Total Posts</div>
+  </div>
+  <div class="card">
+    <div class="card-value secondary">2,156</div>
+    <div class="card-label">Favorites</div>
+  </div>
+  <div class="card">
+    <div class="card-value ratio">0.67%</div>
+    <div class="card-label">Overall Ratio</div>
+  </div>
+</div>
+
+<!-- Ratio Heat Map -->
+<div class="section">
+  <h3>Ratio Heat Map</h3>
+  <div class="heat-strip" id="heatStrip"></div>
+  <div class="axis-labels" id="heatLabels"></div>
+</div>
+
+<!-- Distribution Density -->
+<div class="section">
+  <h3>Distribution Density</h3>
+  <div class="legend">
+    <span><span class="legend-dot" style="background:#3a3a3a"></span>Total posts</span>
+    <span><span class="legend-dot" style="background:#7C4DFF"></span>Favorites</span>
+  </div>
+  <div class="chart" id="barChart"></div>
+  <div class="axis-labels" id="barLabels"></div>
+</div>
+
+<!-- Rating Breakdown -->
+<div class="section">
+  <h3>Rating Breakdown</h3>
+  <div class="legend" id="ratingLegend"></div>
+  <div class="rating-card">
+    <div class="rating-bars" id="ratingBars"></div>
+  </div>
+</div>
+
+<!-- Top Favorites -->
+<div class="section">
+  <h3>Top Favorites</h3>
+  <div class="rankings" id="rankings"></div>
+</div>
+
+<div id="tooltip" class="tooltip"></div>
+
+<script>
+// ========== MOCK DATA ==========
+const TOTAL_POSTS = 320847;
+const NUM_BUCKETS = 80;
+const BUCKET_SIZE = Math.ceil(TOTAL_POSTS / NUM_BUCKETS);
+
+function generateBucketData() {
+  const buckets = [];
+  for (let i = 0; i < NUM_BUCKETS; i++) {
+    const idStart = i * BUCKET_SIZE;
+    const idEnd = Math.min((i + 1) * BUCKET_SIZE, TOTAL_POSTS);
+    const total = BUCKET_SIZE + Math.floor((Math.random() - 0.5) * 400);
+    const progress = i / NUM_BUCKETS;
+    let likedBase;
+    if (progress < 0.1) likedBase = Math.random() * 2;
+    else if (progress < 0.3) likedBase = 5 + Math.random() * 15;
+    else if (progress < 0.5) likedBase = 20 + Math.random() * 40;
+    else if (progress < 0.75) likedBase = 40 + Math.random() * 60;
+    else if (progress < 0.9) likedBase = 15 + Math.random() * 35;
+    else likedBase = 2 + Math.random() * 8;
+    const liked = Math.max(0, Math.round(likedBase));
+    buckets.push({ idStart, idEnd, total, liked, ratio: liked / Math.max(total, 1) });
+  }
+  return buckets;
+}
+
+// Reverse: left = newest (high ID), right = oldest (low ID)
+const data = generateBucketData().reverse();
+const maxTotal = Math.max(...data.map(d => d.total));
+const maxLiked = Math.max(...data.map(d => d.liked));
+const maxRatio = Math.max(...data.map(d => d.ratio));
+
+const tooltip = document.getElementById('tooltip');
+function showTooltip(e, html) {
+  tooltip.style.display = 'block';
+  tooltip.innerHTML = html;
+  tooltip.style.left = Math.min(e.clientX + 12, window.innerWidth - 220) + 'px';
+  tooltip.style.top = (e.clientY - 10) + 'px';
+}
+function hideTooltip() { tooltip.style.display = 'none'; }
+
+function makeAxisLabels(id) {
+  const el = document.getElementById(id);
+  const labels = [TOTAL_POSTS, Math.round(TOTAL_POSTS * 0.75), Math.round(TOTAL_POSTS * 0.5), Math.round(TOTAL_POSTS * 0.25), 0];
+  el.innerHTML = labels.map(v => `<span>${v.toLocaleString()}</span>`).join('');
+}
+
+// ========== HEAT STRIP ==========
+const heatStrip = document.getElementById('heatStrip');
+data.forEach(bucket => {
+  const cell = document.createElement('div');
+  cell.className = 'heat-cell';
+  const intensity = maxRatio > 0 ? bucket.ratio / maxRatio : 0;
+  if (intensity < 0.01) {
+    cell.style.backgroundColor = '#1a1a1a';
+  } else {
+    cell.style.backgroundColor = `hsl(265, ${60 + intensity * 40}%, ${10 + intensity * 45}%)`;
+  }
+  cell.addEventListener('mousemove', e => showTooltip(e, `
+    <b>ID ${bucket.idStart.toLocaleString()} ~ ${bucket.idEnd.toLocaleString()}</b><br>
+    Favorites: ${bucket.liked} / ${bucket.total.toLocaleString()}<br>
+    Ratio: ${(bucket.ratio * 100).toFixed(2)}%
+  `));
+  cell.addEventListener('mouseleave', hideTooltip);
+  heatStrip.appendChild(cell);
+});
+makeAxisLabels('heatLabels');
+
+// ========== BAR CHART ==========
+const barChart = document.getElementById('barChart');
+data.forEach(bucket => {
+  const group = document.createElement('div');
+  group.className = 'bar-group';
+  const barTotal = document.createElement('div');
+  barTotal.className = 'bar-total';
+  barTotal.style.height = (bucket.total / maxTotal * 100) + '%';
+  const barLiked = document.createElement('div');
+  barLiked.className = 'bar-liked';
+  barLiked.style.height = maxLiked > 0 ? (bucket.liked / maxLiked * 80) + '%' : '0';
+  group.appendChild(barTotal);
+  group.appendChild(barLiked);
+  group.addEventListener('mousemove', e => showTooltip(e, `
+    <b>ID ${bucket.idStart.toLocaleString()} ~ ${bucket.idEnd.toLocaleString()}</b><br>
+    Total: ${bucket.total.toLocaleString()}<br>
+    <span style="color:#B388FF">Favorites: ${bucket.liked}</span><br>
+    Ratio: ${(bucket.ratio * 100).toFixed(2)}%
+  `));
+  group.addEventListener('mouseleave', hideTooltip);
+  barChart.appendChild(group);
+});
+makeAxisLabels('barLabels');
+
+// ========== RATING STACKED BARS ==========
+const RATINGS_ALL = { s: 145000, q: 120000, e: 55847 };
+const RATINGS_LIKED = { s: 980, q: 850, e: 326 };
+const RATING_COLORS = { s: '#4CAF50', q: '#FF9800', e: '#F44336' };
+const RATING_NAMES = { s: 'Safe', q: 'Questionable', e: 'Explicit' };
+
+function buildStackedBar(label, data) {
+  const total = Object.values(data).reduce((a, b) => a + b, 0);
+  const row = document.createElement('div');
+  row.className = 'rating-bar-row';
+
+  const labelEl = document.createElement('span');
+  labelEl.className = 'rating-bar-label';
+  labelEl.textContent = label;
+  row.appendChild(labelEl);
+
+  const track = document.createElement('div');
+  track.className = 'rating-bar-track';
+
+  for (const [key, val] of Object.entries(data)) {
+    const pct = (val / total) * 100;
+    const seg = document.createElement('div');
+    seg.className = 'rating-bar-seg';
+    seg.style.width = pct + '%';
+    seg.style.backgroundColor = RATING_COLORS[key];
+    if (pct > 8) seg.textContent = pct.toFixed(1) + '%';
+    seg.addEventListener('mousemove', e => showTooltip(e, `
+      <b>${RATING_NAMES[key]}</b><br>
+      ${val.toLocaleString()} (${pct.toFixed(1)}%)
+    `));
+    seg.addEventListener('mouseleave', hideTooltip);
+    track.appendChild(seg);
+  }
+
+  row.appendChild(track);
+  return row;
+}
+
+const ratingBars = document.getElementById('ratingBars');
+ratingBars.appendChild(buildStackedBar('All Posts', RATINGS_ALL));
+ratingBars.appendChild(buildStackedBar('Favorites', RATINGS_LIKED));
+
+const ratingLegend = document.getElementById('ratingLegend');
+for (const [key, name] of Object.entries(RATING_NAMES)) {
+  ratingLegend.innerHTML += `<span><span class="legend-dot" style="background:${RATING_COLORS[key]}"></span>${name}</span>`;
+}
+
+// ========== TOP RANKINGS ==========
+const MOCK_ARTISTS = [
+  { name: 'misoni_comi', count: 87 }, { name: 'kantoku', count: 72 }, { name: 'mitsuba_choco', count: 65 },
+  { name: 'anmi', count: 58 }, { name: 'cierra_(artist)', count: 51 }, { name: 'tiv', count: 44 },
+  { name: 'rurudo', count: 38 }, { name: 'momoko_(momopoco)', count: 33 }, { name: 'fuzichoco', count: 29 },
+  { name: 'ask_(askzy)', count: 25 },
+];
+const MOCK_CHARACTERS = [
+  { name: 'hatsune_miku', count: 54 }, { name: 'saber', count: 42 }, { name: 'rem_(re:zero)', count: 38 },
+  { name: 'asuna_(sao)', count: 31 }, { name: 'tohsaka_rin', count: 28 }, { name: 'zero_two', count: 24 },
+  { name: 'emilia_(re:zero)', count: 21 }, { name: 'shimakaze', count: 19 }, { name: 'megumin', count: 17 },
+  { name: 'kato_megumi', count: 15 },
+];
+const MOCK_COPYRIGHTS = [
+  { name: 'fate/series', count: 112 }, { name: 'vocaloid', count: 89 }, { name: 'genshin_impact', count: 76 },
+  { name: 're:zero', count: 58 }, { name: 'azur_lane', count: 45 }, { name: 'kantai_collection', count: 41 },
+  { name: 'sword_art_online', count: 35 }, { name: 'blue_archive', count: 30 }, { name: 'honkai:star_rail', count: 27 },
+  { name: 'konosuba', count: 22 },
+];
+
+const RANK_COLORS = { 'Top Artists': '#FF6D00', 'Top Characters': '#7C4DFF', 'Top Copyrights': '#00BFA5' };
+
+function buildRanking(title, items, color) {
+  const card = document.createElement('div');
+  card.className = 'ranking-card';
+  const maxCount = items[0].count;
+  card.innerHTML = `<h3>${title}</h3>` + items.map((item, i) => `
+    <div class="rank-item">
+      <span class="rank-num">${i + 1}</span>
+      <div class="rank-bar-bg">
+        <div class="rank-bar-fill" style="width:${item.count / maxCount * 100}%;background:${color}${i < 3 ? '' : '99'}">${item.name.replace(/_/g, ' ')}</div>
+      </div>
+      <span class="rank-count">${item.count}</span>
+    </div>
+  `).join('');
+  return card;
+}
+
+const rankingsEl = document.getElementById('rankings');
+rankingsEl.appendChild(buildRanking('Top Artists', MOCK_ARTISTS, RANK_COLORS['Top Artists']));
+rankingsEl.appendChild(buildRanking('Top Characters', MOCK_CHARACTERS, RANK_COLORS['Top Characters']));
+rankingsEl.appendChild(buildRanking('Top Copyrights', MOCK_COPYRIGHTS, RANK_COLORS['Top Copyrights']));
+</script>
+
+</body>
+</html>

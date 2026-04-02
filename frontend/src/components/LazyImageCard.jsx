@@ -1,20 +1,21 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Card, CardMedia, IconButton, Box, Skeleton, Fade, Grow, Snackbar, Alert } from '@mui/material';
+import React, { useState, useEffect, useRef } from 'react';
+import { Card, CardMedia, IconButton, Box, Skeleton, Fade, Grow } from '@mui/material';
 import FavoriteBorderIcon from '@mui/icons-material/FavoriteBorder';
 import FavoriteIcon from '@mui/icons-material/Favorite';
 import CloudOffIcon from '@mui/icons-material/CloudOff';
 import ImageNotSupportedIcon from '@mui/icons-material/ImageNotSupported';
 import { useMutation } from '@tanstack/react-query';
 import { useInView } from 'react-intersection-observer';
+import { useTranslation } from 'react-i18next';
 import { toggleLike } from '../api';
 import { getImageUrl } from '../utils/imageUtils';
 import { connectivityService } from '../utils/ConnectivityService';
 
-const LazyImageCard = ({ post, index, onImageClick, onLikeChange, groupCount }) => {
+const LazyImageCard = ({ post, index, onImageClick, onLikeChange, onNotify, groupCount }) => {
+  const { t } = useTranslation();
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageError, setImageError] = useState(false);
   const [isLiked, setIsLiked] = useState(post.liked);
-  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
   const [shouldLoadImage, setShouldLoadImage] = useState(false);
   const [isOffline, setIsOffline] = useState(!connectivityService.isOnline);
   const imgRef = useRef(null);
@@ -86,17 +87,15 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange, groupCount }) 
       if (onLikeChange) {
         onLikeChange(post.id, newLikedState);
       }
-      setSnackbar({
-        open: true,
-        message: data.message || (newLikedState ? '已添加到收藏' : '已从收藏中移除'),
+      onNotify?.({
+        message: data.message || (newLikedState ? t('like.added') : t('like.removed')),
         severity: 'success'
       });
     },
     onError: (error) => {
       console.error('Toggle like error:', error);
-      setSnackbar({
-        open: true,
-        message: '操作失败，请重试',
+      onNotify?.({
+        message: t('like.failed'),
         severity: 'error'
       });
     }
@@ -105,11 +104,6 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange, groupCount }) 
   const handleLike = (e) => {
     e.stopPropagation();
     mutation.mutate();
-  };
-
-  const handleCloseSnackbar = (event, reason) => {
-    if (reason === 'clickaway') return;
-    setSnackbar({ ...snackbar, open: false });
   };
 
   const imageUrl = getImageUrl(post.data?.preview_url);
@@ -136,7 +130,7 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange, groupCount }) 
                 component="img"
                 decoding="async"
                 image={imageUrl}
-                alt="image"
+                alt={post.data?.tags || 'Post image'}
                 onClick={() => onImageClick(index)}
                 onLoad={handleImageLoad}
                 onError={handleImageError}
@@ -146,7 +140,10 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange, groupCount }) 
                   objectFit: 'cover',
                   opacity: imageLoaded ? 1 : 0,
                   cursor: 'pointer',
-                  transition: 'opacity 0.6s ease, transform 0.3s ease',
+                  transition: 'opacity 0.3s ease, transform 0.3s ease',
+                  '@media (prefers-reduced-motion: reduce)': {
+                    transition: 'none',
+                  },
                   '&:hover': {
                     transform: 'scale(1.02)',
                   }
@@ -179,7 +176,7 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange, groupCount }) 
                     flexDirection: 'column',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    backgroundColor: 'grey.200',
+                    backgroundColor: 'grey.800',
                     color: 'grey.500',
                     cursor: 'default',
                     textAlign: 'center',
@@ -212,6 +209,8 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange, groupCount }) 
                   disabled={mutation.isPending}
                   size="small"
                   sx={{
+                    minWidth: 44,
+                    minHeight: 44,
                     transition: 'transform 0.2s ease',
                     '&:hover': {
                       transform: 'scale(1.1)',
@@ -243,7 +242,7 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange, groupCount }) 
                     fontSize: '12px',
                     fontWeight: 700,
                     lineHeight: 1.4,
-                    fontFamily: '"Inter", "Roboto", sans-serif',
+                    fontFamily: 'inherit',
                     boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
                   }}
                 >
@@ -261,22 +260,6 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange, groupCount }) 
           />
         )}
       </Card>
-
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={3000}
-        onClose={handleCloseSnackbar}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-      >
-        <Alert
-          onClose={handleCloseSnackbar}
-          severity={snackbar.severity}
-          variant="filled"
-          sx={{ width: '100%' }}
-        >
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
     </>
   );
 };

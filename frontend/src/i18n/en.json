@@ -1,0 +1,101 @@
+{
+  "nav": {
+    "gallery": "Gallery",
+    "favorites": "Favorites",
+    "stats": "Stats"
+  },
+  "search": {
+    "placeholder": "Enter tag name",
+    "placeholderWithQuery": "Enter new tag to search",
+    "label": "Search tags..."
+  },
+  "pagination": {
+    "showing": "Showing {{start}} - {{end}} of {{total}}",
+    "jumpTo": "Go to",
+    "page": "",
+    "jump": "Go",
+    "perPage": "Per page",
+    "items": "{{count}}",
+    "pageInfo": "Page {{current}} of {{total}}"
+  },
+  "sort": {
+    "label": "Sort by",
+    "score": "Score (high to low)",
+    "id": "ID (newest first)",
+    "fileSize": "File size (large first)",
+    "resolution": "Resolution (large first)",
+    "wideFirst": "Widescreen first",
+    "shuffle": "Shuffle"
+  },
+  "grid": {
+    "sizeTitle": "Image Size",
+    "sizeDesc": "Drag the slider to adjust image size. The grid will reflow automatically.",
+    "sizeTooltip": "Image size",
+    "small": "Small",
+    "default": "Default",
+    "large": "Large"
+  },
+  "filter": {
+    "excludedTags": "Excluded tags",
+    "excludedTagsTitle": "Excluded Tags (Filter Posts)",
+    "excludedTagsDesc": "Posts containing these tags will be hidden. Changes take effect immediately.",
+    "excludedTagsFiltered": "{{count}} filtered on this page",
+    "excludedTagsInput": "Tags to exclude",
+    "excludedTagsPlaceholder": "Enter tag names (multiple allowed)",
+    "excludedTagsTooltip": "Excluded tags ({{count}} filtered on this page)",
+    "excludedTagsTooltipDefault": "Excluded tags",
+    "relevanceFilter": "Relevance filter",
+    "relevanceFilterTitle": "Relevance Filter",
+    "relevanceFilterDesc": "Drag the slider to set a threshold. Posts below the threshold will be hidden.",
+    "relevanceFilterTooltip": "Relevance filter ({{count}} filtered on this page)",
+    "relevanceFilterTooltipDefault": "Relevance filter",
+    "relevanceNoWeights": "Relevance weights not loaded yet. Please wait for initialization.",
+    "relevanceNoScores": "No relevance scores available for this page (tagInfo may not be loaded).",
+    "relevanceDistribution": "Current page distribution (Y-axis log scale)",
+    "relevanceThreshold": "Threshold ≥ {{value}}: keep {{pass}}, filter {{removed}}",
+    "relevanceCount": "{{count}} posts",
+    "relevanceCountLabel": "Count",
+    "relevanceScoreRange": "Score range: {{range}}",
+    "relevanceThresholdLabel": "Threshold"
+  },
+  "actions": {
+    "clear": "Clear",
+    "close": "Close",
+    "reset": "Reset",
+    "retry": "Retry",
+    "clearSearch": "Clear search"
+  },
+  "like": {
+    "added": "Added to favorites",
+    "removed": "Removed from favorites",
+    "failed": "Operation failed, please try again",
+    "liked": "Favorited"
+  },
+  "stats": {
+    "title": "Stats",
+    "totalPosts": "Total Posts",
+    "favorites": "Favorites",
+    "overallRatio": "Overall Ratio",
+    "ratioHeatMap": "Ratio Heat Map",
+    "distributionDensity": "Distribution Density",
+    "totalPostsLegend": "Total posts",
+    "favoritesLegend": "Favorites",
+    "ratingBreakdown": "Rating Breakdown",
+    "allPosts": "All Posts",
+    "topFavorites": "Top Favorites",
+    "topArtists": "Top Artists",
+    "topCharacters": "Top Characters",
+    "topCopyrights": "Top Copyrights",
+    "safe": "Safe",
+    "questionable": "Questionable",
+    "explicit": "Explicit",
+    "idRange": "ID {{start}} ~ {{end}}",
+    "total": "Total",
+    "ratio": "Ratio"
+  },
+  "status": {
+    "loadError": "Failed to load",
+    "noResults": "No results found",
+    "noFavorites": "No favorites yet"
+  }
+}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import PhotoSwipeLightbox from 'photoswipe/lightbox';
 import 'photoswipe/style.css';
 import PhotoSwipeFullscreen from '../utils/photoswipe-fullscreen.esm';
@@ -6,11 +6,11 @@ import { toggleLike } from '../api';
 import { getImageUrl } from '../utils/imageUtils';
 
 /**
- * PhotoSwipe lightbox hook，封装初始化、slideshow、like 按钮、caption 自动隐藏、分组浏览。
+ * PhotoSwipe lightbox hook，封装初始化、slideshow、like 按钮、caption（Portal）、分组浏览。
  *
  * @param {Object} options
  * @param {Array} options.displayPosts - 网格中实际显示的帖子（分组后）
- * @param {Array} options.allPosts - 全部帖子（含被分组隐藏的，用于 caption DOM 查找）
+ * @param {Array} options.allPosts - 全部帖子（含被分组隐藏的）
  * @param {Map}   options.groupMap - parentId → [group members]，可选
  * @param {Function} options.handleTagClick - 点击 caption 中 tag 的回调
  * @param {Function} options.handleLikeChange - (postId, isLiked) => void
@@ -19,7 +19,7 @@ import { getImageUrl } from '../utils/imageUtils';
  */
 export function usePhotoSwipe({
   displayPosts,
-  allPosts,
+  // allPosts — kept in API for future use
   groupMap,
   handleTagClick,
   handleLikeChange,
@@ -32,6 +32,10 @@ export function usePhotoSwipe({
   const fullDataSourceRef = useRef([]);
   const postsLikeStateRef = useRef({});
   const postsRef = useRef([]);
+
+  // Portal 状态：当前激活的 postId 和 caption 容器 DOM 节点
+  const [activePostId, setActivePostId] = useState(null);
+  const captionContainerRef = useRef(null);
 
   // 同步 refs
   useEffect(() => { groupMapRef.current = groupMap || new Map(); }, [groupMap]);
@@ -190,13 +194,14 @@ export function usePhotoSwipe({
         updateLikeButton(isLiked);
       });
 
-      // Caption (auto-hide: desktop hot zone + mobile tap toggle)
+      // Caption container (auto-hide: desktop hot zone + mobile tap toggle)
+      // Content is rendered via React Portal from the parent component
       pswp.ui.registerElement({
         name: 'custom-caption',
         order: 9,
         isButton: false,
         appendTo: 'root',
-        html: 'Caption text',
+        html: '',
         onInit: (el, pswp) => {
           el.style.cssText = `
             position: absolute;
@@ -209,6 +214,9 @@ export function usePhotoSwipe({
             transition: opacity 0.3s ease, transform 0.3s ease;
             pointer-events: none;
           `;
+
+          // 保存 caption 容器引用，供 Portal 使用
+          captionContainerRef.current = el;
 
           const showCaption = () => {
             el.style.opacity = '1';
@@ -257,31 +265,19 @@ export function usePhotoSwipe({
             if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
           });
 
-          // Caption content update
+          // 通过 setState 触发 Portal 渲染，代替 innerHTML
           pswp.on('change', () => {
-            const slideData = pswp.currSlide?.data;
-            const postId = slideData?.postId;
-            if (postId) {
-              const captionEl = document.querySelector(`[data-caption-id="${postId}"]`);
-              if (captionEl) {
-                el.innerHTML = captionEl.innerHTML;
-                el.querySelectorAll('[data-tag]').forEach(tagEl => {
-                  const tag = tagEl.getAttribute('data-tag');
-                  tagEl.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    pswp.close();
-                    setTimeout(() => handleTagClick(tag), 100);
-                  });
-                });
-              } else {
-                el.innerHTML = '';
-              }
-            } else {
-              el.innerHTML = '';
-            }
+            const postId = pswp.currSlide?.data?.postId || null;
+            setActivePostId(postId);
           });
           setTimeout(() => pswp.dispatch('change'), 50);
         },
+      });
+
+      // Clear activePostId on close
+      pswp.on('close', () => {
+        setActivePostId(null);
+        captionContainerRef.current = null;
       });
 
       // Pause slideshow on drag
@@ -324,6 +320,7 @@ export function usePhotoSwipe({
         lightboxRef.current = null;
       }
       window.currentLightbox = null;
+      captionContainerRef.current = null;
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -369,5 +366,19 @@ export function usePhotoSwipe({
     }
   }, [displayPosts]);
 
-  return { onImageClick };
+  // 关闭 PhotoSwipe 并触发 tag 搜索
+  const closeLightboxAndSearch = useCallback((tag) => {
+    const lightbox = window.currentLightbox;
+    if (lightbox?.pswp) {
+      lightbox.pswp.close();
+    }
+    setTimeout(() => handleTagClick(tag), 100);
+  }, [handleTagClick]);
+
+  return {
+    onImageClick,
+    activePostId,
+    captionContainerRef,
+    closeLightboxAndSearch,
+  };
 }

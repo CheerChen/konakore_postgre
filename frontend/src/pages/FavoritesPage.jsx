@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 
 import SearchBar from '../components/SearchBar';
@@ -10,15 +11,34 @@ import LazyImageCard from '../components/LazyImageCard';
 import CaptionContent from '../components/CaptionContent';
 import { getPosts, searchTags } from '../api';
 import { useTag } from '../contexts/TagContext';
-import { Box, CircularProgress, Typography } from '@mui/material';
+import { Box, CircularProgress, Typography, Snackbar, Alert, Button } from '@mui/material';
+import { ErrorOutline as ErrorIcon, SearchOff as EmptyIcon } from '@mui/icons-material';
 import { usePhotoSwipe } from '../hooks/usePhotoSwipe';
+import ImageSizeModal from '../components/ImageSizeModal';
+import { usePostsProcessing } from '../hooks/usePostsProcessing';
+import { useTranslation } from 'react-i18next';
 
 const FavoritesPage = () => {
+  const { t } = useTranslation();
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [perPage, setPerPage] = useState(100);
   const [sortOption, setSortOption] = useState('id');
   const [postsLikeState, setPostsLikeState] = useState({});
+  const [imageSizeOpen, setImageSizeOpen] = useState(false);
+  const [columnWidth, setColumnWidth] = useState(() => {
+    const saved = localStorage.getItem('konakore_column_width');
+    return saved ? Number(saved) : 260;
+  });
+  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+
+  const handleNotify = useCallback(({ message, severity }) => {
+    setSnackbar({ open: true, message, severity });
+  }, []);
+  const handleCloseSnackbar = useCallback((_, reason) => {
+    if (reason === 'clickaway') return;
+    setSnackbar(prev => ({ ...prev, open: false }));
+  }, []);
 
   const {
     extractTagsFromPosts,
@@ -69,6 +89,12 @@ const FavoritesPage = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const handleColumnWidthChange = useCallback((value) => {
+    setColumnWidth(value);
+    localStorage.setItem('konakore_column_width', String(value));
+  }, []);
+
+
   // --- DATA PROCESSING ---
   let posts = [];
   let isLoading = false;
@@ -93,45 +119,11 @@ const FavoritesPage = () => {
   }
 
   // 合并本地收藏状态 + 排序（无过滤、无分组）
-  const postsForGrid = useMemo(() => {
-    if (!posts.length) return posts;
-
-    const postsWithUpdatedLikes = posts.map(post => ({
-      ...post,
-      liked: postsLikeState.hasOwnProperty(post.id) ? postsLikeState[post.id] : post.liked
-    }));
-
-    return [...postsWithUpdatedLikes].sort((a, b) => {
-      switch (sortOption) {
-        case 'score':
-          return (b.data.score || 0) - (a.data.score || 0);
-        case 'id':
-          return (b.id || 0) - (a.id || 0);
-        case 'file_size':
-          return (b.data.file_size || 0) - (a.data.file_size || 0);
-        case 'resolution': {
-          const aPixels = (a.data.width || 0) * (a.data.height || 0);
-          const bPixels = (b.data.width || 0) * (b.data.height || 0);
-          return bPixels - aPixels;
-        }
-        case 'waifu_pillow': {
-          const aRatio = (a.data.width || 0) / (a.data.height || 1);
-          const bRatio = (b.data.width || 0) / (b.data.height || 1);
-          const aIsWaifu = aRatio > 2 ? 1 : 0;
-          const bIsWaifu = bRatio > 2 ? 1 : 0;
-          if (aIsWaifu !== bIsWaifu) return bIsWaifu - aIsWaifu;
-          return bRatio - aRatio;
-        }
-        case 'shuffle': {
-          const seedA = (a.id || 0) * 9301 + 49297;
-          const seedB = (b.id || 0) * 9301 + 49297;
-          return (seedA % 233280) - (seedB % 233280);
-        }
-        default:
-          return 0;
-      }
-    });
-  }, [posts, sortOption, postsLikeState]);
+  const { postsForGrid } = usePostsProcessing({
+    posts,
+    sortOption,
+    postsLikeState,
+  });
 
   // Tags
   const currentPageTags = useMemo(() => {
@@ -148,7 +140,7 @@ const FavoritesPage = () => {
   }, [currentPageTags, mergeTagsWithCache]);
 
   // --- PHOTOSWIPE (no groupMap) ---
-  const { onImageClick } = usePhotoSwipe({
+  const { onImageClick, activePostId, captionContainerRef, closeLightboxAndSearch } = usePhotoSwipe({
     displayPosts: postsForGrid,
     allPosts: postsForGrid,
     groupMap: null,
@@ -158,10 +150,37 @@ const FavoritesPage = () => {
     posts,
   });
 
+  const activePost = useMemo(() => {
+    if (!activePostId) return null;
+    return postsForGrid.find(p => p.id === activePostId) || null;
+  }, [activePostId, postsForGrid]);
+
+  const handleRetry = useCallback(() => {
+    if (searchQuery) {
+      searchQueryResults.refetch();
+    } else {
+      postsQuery.refetch();
+    }
+  }, [searchQuery, searchQueryResults, postsQuery]);
+
   // --- RENDER ---
   const renderContent = () => {
-    if (isLoading) return <CircularProgress />;
-    if (isError) return <Typography color="error">Error loading favorites.</Typography>;
+    if (isLoading) {
+      return (
+        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '300px' }}>
+          <CircularProgress />
+        </Box>
+      );
+    }
+    if (isError) {
+      return (
+        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, py: 8 }}>
+          <ErrorIcon sx={{ fontSize: 48, color: 'error.main' }} />
+          <Typography color="error">{t('status.loadError')}</Typography>
+          <Button variant="outlined" onClick={handleRetry}>{t('actions.retry')}</Button>
+        </Box>
+      );
+    }
 
     return (
       <>
@@ -175,20 +194,26 @@ const FavoritesPage = () => {
           totalItems={totalPosts}
           sortOption={sortOption}
           onSortChange={setSortOption}
+          onOpenImageSize={() => setImageSizeOpen(true)}
         />
-        {isLoading ? (
-          <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px', flexDirection: 'column', gap: 2 }}>
-            <CircularProgress size={60} />
-            <Typography variant="body1" color="text.secondary">Loading favorites...</Typography>
-          </Box>
-        ) : (
+        {postsForGrid.length > 0 ? (
           <MasonryGrid
             posts={postsForGrid}
             onImageClick={onImageClick}
             LazyImageCard={LazyImageCard}
             isLoading={isLoading}
             onLikeChange={handleLikeChange}
+            onNotify={handleNotify}
+            columnWidth={columnWidth}
           />
+        ) : (
+          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, py: 8 }}>
+            <EmptyIcon sx={{ fontSize: 48, color: 'text.disabled' }} />
+            <Typography color="text.secondary">{t('status.noFavorites')}</Typography>
+            {searchQuery && (
+              <Button variant="outlined" size="small" onClick={clearSearch}>{t('actions.clearSearch')}</Button>
+            )}
+          </Box>
         )}
         <SimplePagination
           currentPage={currentPage}
@@ -202,6 +227,12 @@ const FavoritesPage = () => {
 
   return (
     <AppLayout>
+      <ImageSizeModal
+        open={imageSizeOpen}
+        onClose={() => setImageSizeOpen(false)}
+        imageMinWidth={columnWidth}
+        onImageMinWidthChange={handleColumnWidthChange}
+      />
       <SearchBar
         onSearch={handleSearch}
         searchQuery={searchQuery}
@@ -224,17 +255,28 @@ const FavoritesPage = () => {
         {renderContent()}
       </Box>
 
-      {/* Hidden caption content for PhotoSwipe */}
-      {postsForGrid.map((post) => (
+      {/* PhotoSwipe caption via Portal */}
+      {activePost && captionContainerRef.current && createPortal(
         <CaptionContent
-          key={`caption-${post.id}`}
-          post={post}
+          post={activePost}
           postsLikeState={postsLikeState}
           getTagColors={getTagColors}
           getTagTranslation={getTagTranslation}
-          handleTagClick={handleTagClick}
-        />
-      ))}
+          handleTagClick={closeLightboxAndSearch}
+        />,
+        captionContainerRef.current
+      )}
+
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={3000}
+        onClose={handleCloseSnackbar}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+      >
+        <Alert onClose={handleCloseSnackbar} severity={snackbar.severity} variant="filled" sx={{ width: '100%' }}>
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </AppLayout>
   );
 };
