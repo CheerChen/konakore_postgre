@@ -1,46 +1,54 @@
-import React, { useCallback } from 'react';
-import { useWindowSize } from '@react-hook/window-size';
-import { Masonry } from 'masonic';
-import { Box, useMediaQuery } from '@mui/material';
+import { useMemo, useCallback } from 'react';
+import { MasonryPhotoAlbum } from 'react-photo-album';
+import 'react-photo-album/masonry.css';
+import { Box } from '@mui/material';
+import { getImageUrl } from '../utils/imageUtils';
 
 const MasonryGrid = ({ posts, onImageClick, LazyImageCard, isLoading, onLikeChange, onNotify, groupMap, columnWidth = 260 }) => {
-  const prefersReducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
-  const [windowWidth] = useWindowSize();
   const CardComponent = LazyImageCard;
 
-  const renderItem = useCallback(({ data: post, index }) => (
+  const photos = useMemo(() =>
+    posts.map(post => ({
+      src: getImageUrl(post.data?.preview_url),
+      width: post.data?.width || 400,
+      height: post.data?.height || 300,
+      key: String(post.id),
+      _post: post,
+    })),
+    [posts]
+  );
+
+  const columns = useCallback((containerWidth) => {
+    return Math.max(1, Math.floor(containerWidth / columnWidth));
+  }, [columnWidth]);
+
+  // react-photo-album v3: render.photo receives (props, context)
+  // context = { photo, index, width, height }
+  const renderPhoto = useCallback((_imgProps, { photo, index, width, height }) => (
     <Box
-      sx={{
-        width: '100%',
-        transition: prefersReducedMotion ? 'none' : 'transform 0.3s ease, box-shadow 0.3s ease',
-        '&:hover': prefersReducedMotion ? {} : {
-          transform: 'translateY(-4px)',
-          boxShadow: '0 8px 25px rgba(0,0,0,0.15)',
-        }
-      }}
+      key={photo.key}
+      sx={{ width, height, overflow: 'hidden' }}
     >
       <CardComponent
-        post={post}
+        post={photo._post}
         index={index}
         onImageClick={onImageClick}
         onLikeChange={onLikeChange}
-        groupCount={groupMap?.get(post.id)?.length || 0}
+        groupCount={groupMap?.get(photo._post.id)?.length || 0}
         onNotify={onNotify}
       />
     </Box>
-  ), [prefersReducedMotion, CardComponent, onImageClick, onLikeChange, groupMap, onNotify]);
+  ), [CardComponent, onImageClick, onLikeChange, groupMap, onNotify]);
 
   if (!posts.length || isLoading) return null;
 
   return (
     <Box sx={{ width: '100%', overflow: 'hidden', px: { xs: 1, sm: 2 } }}>
-      <Masonry
-        key={columnWidth}
-        items={posts}
-        columnWidth={columnWidth}
-        columnGutter={16}
-        overscanBy={2}
-        render={renderItem}
+      <MasonryPhotoAlbum
+        photos={photos}
+        columns={columns}
+        spacing={16}
+        render={{ photo: renderPhoto }}
       />
     </Box>
   );
