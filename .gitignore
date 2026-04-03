@@ -36,3 +36,6 @@ data/
 
 .DS_Store
 Makefile.local
+
+# Node
+node_modules/
