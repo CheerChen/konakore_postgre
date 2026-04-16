@@ -266,6 +266,18 @@ class StatsOverviewResponse(BaseModel):
     generated_at: float
 
 
+class StatsDistributionResponse(BaseModel):
+    """Response model for parameterized distribution query."""
+    buckets: List[StatsDistributionBucket]
+    id_min: int
+    id_max: int
+    global_id_min: int
+    global_id_max: int
+    bucket_width: float
+    can_zoom_in: bool = Field(..., description="False when bucket width < 300")
+    generated_at: float
+
+
 # ============================================================================
 # Helper Functions
 # ============================================================================

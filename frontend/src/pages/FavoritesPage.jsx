@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 
 import SearchBar from '../components/SearchBar';
 import MasonryGrid from '../components/MasonryGrid';
@@ -9,7 +10,7 @@ import PaginationControls from '../components/PaginationControls';
 import SimplePagination from '../components/SimplePagination';
 import LazyImageCard from '../components/LazyImageCard';
 import CaptionContent from '../components/CaptionContent';
-import { getPosts, searchTags } from '../api';
+import { getPosts, searchTags, getSandboxPosts } from '../api';
 import { useTag } from '../contexts/TagContext';
 import { Box, CircularProgress, Typography, Snackbar, Alert, Button } from '@mui/material';
 import { ErrorOutline as ErrorIcon, SearchOff as EmptyIcon } from '@mui/icons-material';
@@ -20,6 +21,7 @@ import { useTranslation } from 'react-i18next';
 
 const FavoritesPage = () => {
   const { t } = useTranslation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [perPage, setPerPage] = useState(100);
@@ -48,6 +50,16 @@ const FavoritesPage = () => {
     getTagTranslation,
   } = useTag();
 
+  // Sandbox mode: derived from URL params
+  const sandboxMin = searchParams.has('id_min') ? parseInt(searchParams.get('id_min'), 10) : null;
+  const sandboxMax = searchParams.has('id_max') ? parseInt(searchParams.get('id_max'), 10) : null;
+  const isSandbox = sandboxMin !== null && sandboxMax !== null && !isNaN(sandboxMin) && !isNaN(sandboxMax);
+
+  const handleClearSandbox = useCallback(() => {
+    setSearchParams({}, { replace: true });
+    setCurrentPage(1);
+  }, [setSearchParams]);
+
   const handleLikeChange = useCallback((postId, isLiked) => {
     setPostsLikeState(prev => ({ ...prev, [postId]: isLiked }));
   }, []);
@@ -56,7 +68,14 @@ const FavoritesPage = () => {
   const postsQuery = useQuery({
     queryKey: ['favorites', currentPage, perPage],
     queryFn: () => getPosts(currentPage, perPage, true),
-    enabled: !searchQuery,
+    enabled: !searchQuery && !isSandbox,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const sandboxQuery = useQuery({
+    queryKey: ['favorites-sandbox', sandboxMin, sandboxMax, currentPage, perPage],
+    queryFn: () => getSandboxPosts(sandboxMin, sandboxMax, currentPage, perPage, true),
+    enabled: isSandbox && !searchQuery,
     staleTime: 5 * 60 * 1000,
   });
 
@@ -109,6 +128,13 @@ const FavoritesPage = () => {
     isError = searchQueryResults.isError;
     totalPages = searchData?.pagination?.total_pages || 0;
     totalPosts = searchData?.pagination?.total_items || 0;
+  } else if (isSandbox) {
+    const data = sandboxQuery.data;
+    posts = data?.posts || [];
+    isLoading = sandboxQuery.isLoading;
+    isError = sandboxQuery.isError;
+    totalPages = data?.pagination?.total_pages || 0;
+    totalPosts = data?.pagination?.total_items || 0;
   } else {
     const postsData = postsQuery.data;
     posts = postsData?.posts || [];
@@ -192,9 +218,13 @@ const FavoritesPage = () => {
           onPerPageChange={(newPerPage) => { setPerPage(newPerPage); setCurrentPage(1); }}
           isLoading={isLoading}
           totalItems={totalPosts}
+          visibleCount={postsForGrid.length}
           sortOption={sortOption}
           onSortChange={setSortOption}
           onOpenImageSize={() => setImageSizeOpen(true)}
+          sandboxMin={isSandbox ? sandboxMin : null}
+          sandboxMax={isSandbox ? sandboxMax : null}
+          onClearSandbox={handleClearSandbox}
         />
         {postsForGrid.length > 0 ? (
           <MasonryGrid
