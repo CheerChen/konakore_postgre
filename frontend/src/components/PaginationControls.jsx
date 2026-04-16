@@ -10,6 +10,7 @@ const PaginationControls = ({
   perPage,
   onPerPageChange,
   totalItems,
+  visibleCount,
   isLoading = false,
   sortOption,
   onSortChange,
@@ -18,6 +19,9 @@ const PaginationControls = ({
   excludedCountOnPage = 0,
   relevanceRemovedCount = 0,
   onOpenImageSize,
+  sandboxMin,
+  sandboxMax,
+  onClearSandbox,
 }) => {
   const { t } = useTranslation();
   const [jumpToPage, setJumpToPage] = useState('');
@@ -44,13 +48,41 @@ const PaginationControls = ({
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', mt: 4, mb: 2, gap: 2 }}>
       <Box sx={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 2 }}>
-        <Typography variant="body2" color="text.secondary">
-          {t('pagination.showing', {
-            start: ((currentPage - 1) * perPage) + 1,
-            end: Math.min(currentPage * perPage, totalItems),
-            total: totalItems
-          })}
-        </Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+          <Typography variant="body2" color="text.secondary">
+            {t('pagination.showing', {
+              visible: visibleCount != null ? visibleCount : Math.min(perPage, totalItems - (currentPage - 1) * perPage),
+              loaded: Math.min(perPage, totalItems - (currentPage - 1) * perPage),
+              total: totalItems.toLocaleString(),
+            })}
+          </Typography>
+          {sandboxMin != null && sandboxMax != null && (
+            <Typography
+              variant="body2"
+              component="span"
+              sx={{
+                color: 'primary.main',
+                display: 'inline-flex', alignItems: 'center', gap: 0.5,
+              }}
+            >
+              · {t('pagination.sandboxRange', { min: sandboxMin.toLocaleString(), max: sandboxMax.toLocaleString() })}
+              {onClearSandbox && (
+                <Box
+                  component="span"
+                  onClick={onClearSandbox}
+                  sx={{
+                    cursor: 'pointer', ml: 0.5,
+                    fontSize: 14, lineHeight: 1,
+                    color: 'text.disabled',
+                    '&:hover': { color: 'error.main' },
+                  }}
+                >
+                  ✕
+                </Box>
+              )}
+            </Typography>
+          )}
+        </Box>
 
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
           {showPagination && (

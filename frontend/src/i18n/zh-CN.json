@@ -10,7 +10,8 @@
     "label": "搜索标签..."
   },
   "pagination": {
-    "showing": "显示第 {{start}} - {{end}} 项，共 {{total}} 项",
+    "showing": "显示 {{visible}} / {{loaded}} 条（共 {{total}} 条）",
+    "sandboxRange": "范围 ID {{min}} ~ {{max}}",
     "jumpTo": "跳转到",
     "page": "页",
     "jump": "跳转",
@@ -91,7 +92,12 @@
     "explicit": "Explicit",
     "idRange": "ID {{start}} ~ {{end}}",
     "total": "Total",
-    "ratio": "Ratio"
+    "ratio": "Ratio",
+    "zoomOut": "Zoom Out",
+    "resetZoom": "Reset",
+    "bucketWidth": "桶宽",
+    "goToGallery": "画廊",
+    "goToFavorites": "收藏"
   },
   "status": {
     "loadError": "加载失败",

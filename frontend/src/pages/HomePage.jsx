@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback, useTransition } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 
 import SearchBar from '../components/SearchBar';
 import MasonryGrid from '../components/MasonryGrid';
@@ -8,7 +9,7 @@ import AppLayout from '../components/AppLayout';
 import PaginationControls from '../components/PaginationControls';
 import SimplePagination from '../components/SimplePagination';
 import LazyImageCard from '../components/LazyImageCard';
-import { getPosts, searchTags } from '../api';
+import { getPosts, searchTags, getSandboxPosts } from '../api';
 import { useTag } from '../contexts/TagContext';
 import { tagManager } from '../utils/TagManager';
 import { Box, CircularProgress, Typography, Snackbar, Alert, Button } from '@mui/material';
@@ -23,6 +24,7 @@ import { useTranslation } from 'react-i18next';
 
 const HomePage = () => {
   const { t } = useTranslation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [perPage, setPerPage] = useState(100);
@@ -66,6 +68,16 @@ const HomePage = () => {
     isLoading: tagsLoading
   } = useTag();
 
+  // Sandbox mode: derived from URL params
+  const sandboxMin = searchParams.has('id_min') ? parseInt(searchParams.get('id_min'), 10) : null;
+  const sandboxMax = searchParams.has('id_max') ? parseInt(searchParams.get('id_max'), 10) : null;
+  const isSandbox = sandboxMin !== null && sandboxMax !== null && !isNaN(sandboxMin) && !isNaN(sandboxMax);
+
+  const handleClearSandbox = useCallback(() => {
+    setSearchParams({}, { replace: true });
+    setCurrentPage(1);
+  }, [setSearchParams]);
+
   // 从后端获取 TF-IDF 权重
   useEffect(() => {
     let cancelled = false;
@@ -98,7 +110,14 @@ const HomePage = () => {
   const postsQuery = useQuery({
     queryKey: ['posts', currentPage, perPage],
     queryFn: () => getPosts(currentPage, perPage),
-    enabled: !searchQuery,
+    enabled: !searchQuery && !isSandbox,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const sandboxQuery = useQuery({
+    queryKey: ['posts-sandbox', sandboxMin, sandboxMax, currentPage, perPage],
+    queryFn: () => getSandboxPosts(sandboxMin, sandboxMax, currentPage, perPage),
+    enabled: isSandbox && !searchQuery,
     staleTime: 5 * 60 * 1000,
   });
 
@@ -173,6 +192,13 @@ const HomePage = () => {
     isError = searchQueryResults.isError;
     totalPages = searchData?.pagination?.total_pages || 0;
     totalPosts = searchData?.pagination?.total_items || 0;
+  } else if (isSandbox) {
+    const data = sandboxQuery.data;
+    posts = data?.posts || [];
+    isLoading = sandboxQuery.isLoading;
+    isError = sandboxQuery.isError;
+    totalPages = data?.pagination?.total_pages || 0;
+    totalPosts = data?.pagination?.total_items || 0;
   } else {
     const postsData = postsQuery.data;
     posts = postsData?.posts || [];
@@ -284,6 +310,10 @@ const HomePage = () => {
           excludedCountOnPage={excludedCountOnPage}
           relevanceRemovedCount={relevanceRemovedCount}
           onOpenImageSize={() => setImageSizeOpen(true)}
+          visibleCount={groupedDisplayPosts.length}
+          sandboxMin={isSandbox ? sandboxMin : null}
+          sandboxMax={isSandbox ? sandboxMax : null}
+          onClearSandbox={handleClearSandbox}
         />
         {groupedDisplayPosts.length > 0 ? (
           <MasonryGrid

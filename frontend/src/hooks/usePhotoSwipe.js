@@ -229,16 +229,25 @@ export function usePhotoSwipe({
             el.style.pointerEvents = 'none';
           };
 
-          // Desktop: mouse hot zone
+          // Desktop: mouse hot zone + auto-show on open/change
           let hideTimer = null;
+          let inHotZone = false;
           const HOT_ZONE_HEIGHT = 120;
           const HIDE_DELAY = 1500;
+
+          const scheduleHide = () => {
+            if (hideTimer) clearTimeout(hideTimer);
+            hideTimer = setTimeout(() => { hideCaption(); hideTimer = null; }, HIDE_DELAY);
+          };
+
           const handleMouseMove = (e) => {
             if (e.clientY > window.innerHeight - HOT_ZONE_HEIGHT) {
+              inHotZone = true;
               if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
               showCaption();
-            } else if (!hideTimer) {
-              hideTimer = setTimeout(() => { hideCaption(); hideTimer = null; }, HIDE_DELAY);
+            } else {
+              inHotZone = false;
+              if (!hideTimer) scheduleHide();
             }
           };
 
@@ -265,10 +274,12 @@ export function usePhotoSwipe({
             if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
           });
 
-          // 通过 setState 触发 Portal 渲染，代替 innerHTML
+          // Show caption on open and slide change, auto-hide if mouse not in hot zone
           pswp.on('change', () => {
             const postId = pswp.currSlide?.data?.postId || null;
             setActivePostId(postId);
+            showCaption();
+            if (!isTouchDevice && !inHotZone) scheduleHide();
           });
           setTimeout(() => pswp.dispatch('change'), 50);
         },

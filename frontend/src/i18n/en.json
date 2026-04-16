@@ -10,7 +10,8 @@
     "label": "Search tags..."
   },
   "pagination": {
-    "showing": "Showing {{start}} - {{end}} of {{total}}",
+    "showing": "Showing {{visible}} of {{loaded}} (total {{total}})",
+    "sandboxRange": "ID {{min}} ~ {{max}}",
     "jumpTo": "Go to",
     "page": "",
     "jump": "Go",
@@ -91,7 +92,12 @@
     "explicit": "Explicit",
     "idRange": "ID {{start}} ~ {{end}}",
     "total": "Total",
-    "ratio": "Ratio"
+    "ratio": "Ratio",
+    "zoomOut": "Zoom Out",
+    "resetZoom": "Reset",
+    "bucketWidth": "Bucket width",
+    "goToGallery": "Gallery",
+    "goToFavorites": "Favorites"
   },
   "status": {
     "loadError": "Failed to load",
