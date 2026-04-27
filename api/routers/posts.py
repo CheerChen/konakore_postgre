@@ -152,6 +152,83 @@ def list_posts(
             return ListPostsResponse(posts=posts, pagination=pagination)
 
 
+@router.get("/sandbox", response_model=ListPostsResponse)
+def list_posts_sandbox(
+    id_min: int = Query(..., ge=1, description="Minimum post ID (inclusive)"),
+    id_max: int = Query(..., ge=1, description="Maximum post ID (inclusive)"),
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=100, ge=1, le=500),
+    liked: Optional[bool] = Query(default=None, description="Filter by liked status"),
+):
+    """
+    List posts within a specific ID range with pagination.
+    Used for sandbox mode when navigating from Stats distribution chart.
+    """
+    if id_min > id_max:
+        raise HTTPException(status_code=400, detail="id_min must be <= id_max")
+
+    limit = min(limit, 500)
+    offset = (page - 1) * limit
+
+    with get_db_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            range_clause = "id >= %s AND id <= %s"
+            range_params = (id_min, id_max)
+
+            if liked is True:
+                cur.execute(f"SELECT COUNT(*) as count FROM posts WHERE {range_clause} AND is_liked = TRUE", range_params)
+                total_count = cur.fetchone()['count']
+                cur.execute(
+                    f"SELECT id, raw_data, is_processed, is_liked, last_synced_at FROM posts WHERE {range_clause} AND is_liked = TRUE ORDER BY id DESC LIMIT %s OFFSET %s",
+                    (*range_params, limit, offset)
+                )
+            else:
+                cur.execute(f"SELECT COUNT(*) as count FROM posts WHERE {range_clause}", range_params)
+                total_count = cur.fetchone()['count']
+                cur.execute(
+                    f"SELECT id, raw_data, is_processed, is_liked, last_synced_at FROM posts WHERE {range_clause} ORDER BY id DESC LIMIT %s OFFSET %s",
+                    (*range_params, limit, offset)
+                )
+
+            db_posts = cur.fetchall()
+            posts = [Post(**db_post_to_api(row)) for row in db_posts]
+            total_pages = (total_count + limit - 1) // limit
+
+            pagination = PaginationInfo(
+                current_page=page,
+                per_page=limit,
+                total_items=total_count,
+                total_pages=total_pages,
+                has_next=page < total_pages,
+                has_prev=page > 1
+            )
+
+            return ListPostsResponse(posts=posts, pagination=pagination)
+
+
+@router.get("/page-for-id")
+def get_page_for_id(
+    id: int = Query(..., description="Target post ID to locate"),
+    limit: int = Query(default=100, ge=1, le=500, description="Page size"),
+    liked: Optional[bool] = Query(default=None, description="Filter by liked status"),
+):
+    """
+    Calculate which page a given post ID would appear on.
+    Gallery is ordered by id DESC, so posts with id > target appear before it.
+    Returns { page, position } where position is the 0-based offset.
+    """
+    limit = min(limit, 500)
+    with get_db_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            if liked is True:
+                cur.execute("SELECT COUNT(*) as count FROM posts WHERE id > %s AND is_liked = TRUE", (id,))
+            else:
+                cur.execute("SELECT COUNT(*) as count FROM posts WHERE id > %s", (id,))
+            position = cur.fetchone()['count']
+            page = position // limit + 1
+            return {"page": page, "position": position}
+
+
 @router.get("/{post_id}", response_model=GetPostResponse)
 def get_post(post_id: int):
     """Get a specific post by ID."""

@@ -1,85 +1,55 @@
-import React from 'react';
-import Masonry from '@mui/lab/Masonry';
-import { Box, Fade, Zoom } from '@mui/material';
+import { useMemo, useCallback } from 'react';
+import { MasonryPhotoAlbum } from 'react-photo-album';
+import 'react-photo-album/masonry.css';
+import { Box } from '@mui/material';
+import { getImageUrl } from '../utils/imageUtils';
 
-const MasonryGrid = ({ posts, onImageClick, LazyImageCard, isLoading, onLikeChange, groupMap }) => {
-  // 使用传入的LazyImageCard组件
+const MasonryGrid = ({ posts, onImageClick, LazyImageCard, isLoading, onLikeChange, onNotify, groupMap, columnWidth = 260 }) => {
   const CardComponent = LazyImageCard;
 
-  // 动态计算列数配置
-  const getColumns = () => {
-    const baseColumns = { xs: 2, sm: 3, md: 4, lg: 5 };
-    // 如果结果数量少于最大列数，则使用结果数量作为列数
-    const maxColumns = Math.max(...Object.values(baseColumns));
-    if (posts.length > 0 && posts.length < maxColumns) {
-      return {
-        xs: Math.min(posts.length, baseColumns.xs),
-        sm: Math.min(posts.length, baseColumns.sm), 
-        md: Math.min(posts.length, baseColumns.md),
-        lg: Math.min(posts.length, baseColumns.lg)
-      };
-    }
-    return baseColumns;
-  };
+  const photos = useMemo(() =>
+    posts.map(post => ({
+      src: getImageUrl(post.data?.preview_url),
+      width: post.data?.width || 400,
+      height: post.data?.height || 300,
+      key: String(post.id),
+      _post: post,
+    })),
+    [posts]
+  );
 
-  const columns = getColumns();
+  const columns = useCallback((containerWidth) => {
+    return Math.max(1, Math.floor(containerWidth / columnWidth));
+  }, [columnWidth]);
+
+  // react-photo-album v3: render.photo receives (props, context)
+  // context = { photo, index, width, height }
+  const renderPhoto = useCallback((_imgProps, { photo, index, width, height }) => (
+    <Box
+      key={photo.key}
+      sx={{ width, height, overflow: 'hidden' }}
+    >
+      <CardComponent
+        post={photo._post}
+        index={index}
+        onImageClick={onImageClick}
+        onLikeChange={onLikeChange}
+        groupCount={groupMap?.get(photo._post.id)?.length || 0}
+        onNotify={onNotify}
+      />
+    </Box>
+  ), [CardComponent, onImageClick, onLikeChange, groupMap, onNotify]);
+
+  if (!posts.length || isLoading) return null;
 
   return (
-    <Box 
-      sx={{ 
-        width: '100%',
-        minWidth: '100%', // 确保最小宽度是100%
-        overflow: 'hidden', // 防止内容溢出
-        px: { xs: 1, sm: 2 }, // 添加左右内边距
-      }}
-    >
-      <Fade in={!isLoading} timeout={500}>
-        <Masonry 
-          columns={columns} 
-          spacing={2}
-          sx={{
-            width: '100%',
-            minWidth: '100%', // 确保最小宽度是100%
-            margin: 0, // 重置margin
-            display: 'flex', // 强制使用flex布局
-            justifyContent: 'flex-start', // 始终左对齐
-            '& .MuiMasonry-root': {
-              maxWidth: '100%', // 确保不超出容器宽度
-              minWidth: '100%', // 确保最小宽度是100%
-            }
-          }}
-        >
-          {posts.map((post, index) => (
-            <Zoom 
-              key={post.id}
-              in={true} 
-              timeout={400}
-              style={{ 
-                transitionDelay: `${Math.min(index * 80, 1200)}ms` // 增加延迟，让刷新效果更明显
-              }}
-            >
-              <Box
-                sx={{
-                  width: '100%',
-                  transition: 'transform 0.3s ease, box-shadow 0.3s ease',
-                  '&:hover': {
-                    transform: 'translateY(-4px)',
-                    boxShadow: '0 8px 25px rgba(0,0,0,0.15)',
-                  }
-                }}
-              >
-                <CardComponent
-                  post={post}
-                  index={index}
-                  onImageClick={onImageClick}
-                  onLikeChange={onLikeChange}
-                  groupCount={groupMap?.get(post.id)?.length || 0}
-                />
-              </Box>
-            </Zoom>
-          ))}
-        </Masonry>
-      </Fade>
+    <Box sx={{ width: '100%', overflow: 'hidden', px: { xs: 1, sm: 2 } }}>
+      <MasonryPhotoAlbum
+        photos={photos}
+        columns={columns}
+        spacing={16}
+        render={{ photo: renderPhoto }}
+      />
     </Box>
   );
 };
