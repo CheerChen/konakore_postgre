@@ -66,3 +66,35 @@ export const getRelevanceWeights = async () => {
   const response = await apiClient.get('/v1/users/me/relevance-weights');
   return response.data;
 };
+
+export const getStatsOverview = async () => {
+  const response = await apiClient.get('/v1/stats/overview');
+  return response.data;
+};
+
+export const getPageForId = async (id, limit, liked = null) => {
+  const params = new URLSearchParams({ id: id.toString(), limit: limit.toString() });
+  if (liked !== null) params.append('liked', liked.toString());
+  const response = await apiClient.get(`/v1/posts/page-for-id?${params}`);
+  return response.data;
+};
+
+export const getSandboxPosts = async (idMin, idMax, page = 1, limit = 100, liked = null) => {
+  const params = new URLSearchParams({
+    id_min: idMin.toString(),
+    id_max: idMax.toString(),
+    page: page.toString(),
+    limit: limit.toString(),
+  });
+  if (liked !== null) params.append('liked', liked.toString());
+  const response = await apiClient.get(`/v1/posts/sandbox?${params}`);
+  return response.data;
+};
+
+export const getStatsDistribution = async (idMin, idMax) => {
+  const params = new URLSearchParams();
+  if (idMin != null) params.append('id_min', idMin.toString());
+  if (idMax != null) params.append('id_max', idMax.toString());
+  const response = await apiClient.get(`/v1/stats/distribution?${params}`);
+  return response.data;
+};

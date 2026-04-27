@@ -1,5 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback, useTransition } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 
 import SearchBar from '../components/SearchBar';
 import MasonryGrid from '../components/MasonryGrid';
@@ -7,19 +9,22 @@ import AppLayout from '../components/AppLayout';
 import PaginationControls from '../components/PaginationControls';
 import SimplePagination from '../components/SimplePagination';
 import LazyImageCard from '../components/LazyImageCard';
-import { getPosts, searchTags } from '../api';
-import { formatFileSize, formatDate } from '../utils/formatters';
-import { getImageUrl, getImageDimensionsText } from '../utils/imageUtils';
+import { getPosts, searchTags, getSandboxPosts } from '../api';
 import { useTag } from '../contexts/TagContext';
 import { tagManager } from '../utils/TagManager';
-import { Box, CircularProgress, Typography, Chip } from '@mui/material';
-import { Link as LinkIcon, AspectRatio as SizeIcon, Star as ScoreIcon, DateRange as DateIcon, Storage as FileIcon, Favorite as FavoriteIcon } from '@mui/icons-material';
+import { Box, CircularProgress, Typography, Snackbar, Alert, Button } from '@mui/material';
+import { ErrorOutline as ErrorIcon, SearchOff as EmptyIcon } from '@mui/icons-material';
 import ExcludedTagsModal from '../components/ExcludedTagsModal';
 import RelevanceFilterModal from '../components/RelevanceFilterModal';
+import ImageSizeModal from '../components/ImageSizeModal';
 import { usePhotoSwipe } from '../hooks/usePhotoSwipe';
+import { usePostsProcessing } from '../hooks/usePostsProcessing';
 import CaptionContent from '../components/CaptionContent';
+import { useTranslation } from 'react-i18next';
 
 const HomePage = () => {
+  const { t } = useTranslation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [perPage, setPerPage] = useState(100);
@@ -28,6 +33,20 @@ const HomePage = () => {
   const [excludedTagsOpen, setExcludedTagsOpen] = useState(false);
   const [relevanceFilterOpen, setRelevanceFilterOpen] = useState(false);
   const [weightMap, setWeightMap] = useState(new Map());
+  const [imageSizeOpen, setImageSizeOpen] = useState(false);
+  const [columnWidth, setColumnWidth] = useState(() => {
+    const saved = localStorage.getItem('konakore_column_width');
+    return saved ? Number(saved) : 260;
+  });
+  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+
+  const handleNotify = useCallback(({ message, severity }) => {
+    setSnackbar({ open: true, message, severity });
+  }, []);
+  const handleCloseSnackbar = useCallback((_, reason) => {
+    if (reason === 'clickaway') return;
+    setSnackbar(prev => ({ ...prev, open: false }));
+  }, []);
 
   // 排除标签和相关度阈值，从 tagManager 初始化
   const [excludedTags, setExcludedTags] = useState(() => {
@@ -48,6 +67,16 @@ const HomePage = () => {
     getTagTranslation,
     isLoading: tagsLoading
   } = useTag();
+
+  // Sandbox mode: derived from URL params
+  const sandboxMin = searchParams.has('id_min') ? parseInt(searchParams.get('id_min'), 10) : null;
+  const sandboxMax = searchParams.has('id_max') ? parseInt(searchParams.get('id_max'), 10) : null;
+  const isSandbox = sandboxMin !== null && sandboxMax !== null && !isNaN(sandboxMin) && !isNaN(sandboxMax);
+
+  const handleClearSandbox = useCallback(() => {
+    setSearchParams({}, { replace: true });
+    setCurrentPage(1);
+  }, [setSearchParams]);
 
   // 从后端获取 TF-IDF 权重
   useEffect(() => {
@@ -81,7 +110,14 @@ const HomePage = () => {
   const postsQuery = useQuery({
     queryKey: ['posts', currentPage, perPage],
     queryFn: () => getPosts(currentPage, perPage),
-    enabled: !searchQuery,
+    enabled: !searchQuery && !isSandbox,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const sandboxQuery = useQuery({
+    queryKey: ['posts-sandbox', sandboxMin, sandboxMax, currentPage, perPage],
+    queryFn: () => getSandboxPosts(sandboxMin, sandboxMax, currentPage, perPage),
+    enabled: isSandbox && !searchQuery,
     staleTime: 5 * 60 * 1000,
   });
 
@@ -123,6 +159,7 @@ const HomePage = () => {
     setSortOption(newSortOption);
   };
 
+
   const handleExcludedTagsChange = (newTags) => {
     setExcludedTags(newTags);
     tagManager.setExcludedPostTagsConfig({ tags: newTags });
@@ -134,6 +171,11 @@ const HomePage = () => {
       setRelevanceThreshold(newThreshold);
       tagManager.setRelevanceFilterConfig({ threshold: newThreshold });
     });
+  }, []);
+
+  const handleColumnWidthChange = useCallback((value) => {
+    setColumnWidth(value);
+    localStorage.setItem('konakore_column_width', String(value));
   }, []);
 
   // --- DATA PROCESSING ---
@@ -150,6 +192,13 @@ const HomePage = () => {
     isError = searchQueryResults.isError;
     totalPages = searchData?.pagination?.total_pages || 0;
     totalPosts = searchData?.pagination?.total_items || 0;
+  } else if (isSandbox) {
+    const data = sandboxQuery.data;
+    posts = data?.posts || [];
+    isLoading = sandboxQuery.isLoading;
+    isError = sandboxQuery.isError;
+    totalPages = data?.pagination?.total_pages || 0;
+    totalPosts = data?.pagination?.total_items || 0;
   } else {
     const postsData = postsQuery.data;
     posts = postsData?.posts || [];
@@ -158,17 +207,6 @@ const HomePage = () => {
     totalPages = postsData?.pagination?.total_pages || 0;
     totalPosts = postsData?.pagination?.total_items || 0;
   }
-
-  // 当前页排除标签过滤统计
-  const excludedCountOnPage = useMemo(() => {
-    if (!posts?.length || !excludedTags.length) return 0;
-    return posts.reduce((acc, post) => {
-      const tagsString = tagManager.getPostTagsString(post);
-      if (!tagsString) return acc;
-      const postTags = tagsString.split(' ').filter(Boolean);
-      return acc + (excludedTags.some(t => postTags.includes(t)) ? 1 : 0);
-    }, 0);
-  }, [posts, excludedTags]);
 
   // 预计算所有 post 的相关度分数（使用后端 TF-IDF 权重）
   const postScoresMap = useMemo(() => {
@@ -180,106 +218,22 @@ const HomePage = () => {
     return map;
   }, [posts, weightMap]);
 
-  // 相关度过滤统计
-  const relevanceRemovedCount = useMemo(() => {
-    if (!posts?.length || relevanceThreshold <= 0 || !postScoresMap.size) return 0;
-    let removed = 0;
-    posts.forEach(post => {
-      if ((postScoresMap.get(post.id) || 0) < relevanceThreshold) removed++;
-    });
-    return removed;
-  }, [posts, relevanceThreshold, postScoresMap]);
-
   // --- MEMOIZED DATA FOR RENDERING ---
-  const postsForGrid = useMemo(() => {
-    if (!posts.length) return posts;
-
-    const postsWithUpdatedLikes = posts.map(post => ({
-      ...post,
-      liked: postsLikeState.hasOwnProperty(post.id)
-        ? postsLikeState[post.id]
-        : post.liked
-    }));
-
-    // 排除标签过滤
-    let filteredPosts = postsWithUpdatedLikes;
-    if (excludedTags.length > 0) {
-      filteredPosts = filteredPosts.filter(post => {
-        const tagsString = tagManager.getPostTagsString(post);
-        if (!tagsString) return true;
-        const postTags = tagsString.split(' ').filter(Boolean);
-        return !excludedTags.some(t => postTags.includes(t));
-      });
-    }
-
-    // 排序
-    let sortedPosts = [...filteredPosts].sort((a, b) => {
-      switch (sortOption) {
-        case 'score':
-          return (b.data.score || 0) - (a.data.score || 0);
-        case 'id':
-          return (b.id || 0) - (a.id || 0);
-        case 'file_size':
-          return (b.data.file_size || 0) - (a.data.file_size || 0);
-        case 'resolution': {
-          const aPixels = (a.data.width || 0) * (a.data.height || 0);
-          const bPixels = (b.data.width || 0) * (b.data.height || 0);
-          return bPixels - aPixels;
-        }
-        case 'waifu_pillow': {
-          const aRatio = (a.data.width || 0) / (a.data.height || 1);
-          const bRatio = (b.data.width || 0) / (b.data.height || 1);
-          const aIsWaifu = aRatio > 2 ? 1 : 0;
-          const bIsWaifu = bRatio > 2 ? 1 : 0;
-          if (aIsWaifu !== bIsWaifu) return bIsWaifu - aIsWaifu;
-          return bRatio - aRatio;
-        }
-        case 'shuffle': {
-          const seedA = (a.id || 0) * 9301 + 49297;
-          const seedB = (b.id || 0) * 9301 + 49297;
-          return (seedA % 233280) - (seedB % 233280);
-        }
-        default:
-          return 0;
-      }
-    });
-
-    // 相关度阈值过滤
-    if (relevanceThreshold > 0 && postScoresMap.size > 0) {
-      sortedPosts = sortedPosts.filter(post => (postScoresMap.get(post.id) || 0) >= relevanceThreshold);
-    }
-
-    return sortedPosts;
-  }, [posts, sortOption, postsLikeState, excludedTags, relevanceThreshold, postScoresMap]);
-
-  // 帖子分组
-  const groupedPostsForGrid = useMemo(() => {
-    if (!postsForGrid.length) return { displayPosts: postsForGrid, groupMap: new Map() };
-
-    const childrenByParent = new Map();
-    const postById = new Map();
-
-    postsForGrid.forEach(post => {
-      postById.set(post.id, post);
-      const parentId = post.data?.parent_id;
-      if (parentId && parentId !== post.id) {
-        if (!childrenByParent.has(parentId)) childrenByParent.set(parentId, []);
-        childrenByParent.get(parentId).push(post);
-      }
-    });
-
-    const hiddenIds = new Set();
-    const groupMap = new Map();
-    childrenByParent.forEach((children, parentId) => {
-      if (postById.has(parentId)) {
-        children.forEach(child => hiddenIds.add(child.id));
-        groupMap.set(parentId, [postById.get(parentId), ...children]);
-      }
-    });
-
-    const displayPosts = postsForGrid.filter(post => !hiddenIds.has(post.id));
-    return { displayPosts, groupMap };
-  }, [postsForGrid]);
+  const {
+    postsForGrid,
+    displayPosts: groupedDisplayPosts,
+    groupMap,
+    excludedCountOnPage,
+    relevanceRemovedCount,
+  } = usePostsProcessing({
+    posts,
+    sortOption,
+    postsLikeState,
+    excludedTags,
+    relevanceThreshold,
+    postScoresMap,
+    enableGrouping: true,
+  });
 
   // Tags
   const currentPageTags = useMemo(() => {
@@ -296,20 +250,48 @@ const HomePage = () => {
   }, [currentPageTags, mergeTagsWithCache]);
 
   // --- PHOTOSWIPE ---
-  const { onImageClick } = usePhotoSwipe({
-    displayPosts: groupedPostsForGrid.displayPosts,
+  const { onImageClick, activePostId, captionContainerRef, closeLightboxAndSearch } = usePhotoSwipe({
+    displayPosts: groupedDisplayPosts,
     allPosts: postsForGrid,
-    groupMap: groupedPostsForGrid.groupMap,
+    groupMap: groupMap,
     handleTagClick,
     handleLikeChange,
     postsLikeState,
     posts,
   });
 
+  // 找到当前 caption 对应的 post（从所有 posts 中查找，包括分组中的）
+  const activePost = useMemo(() => {
+    if (!activePostId) return null;
+    return postsForGrid.find(p => p.id === activePostId) || null;
+  }, [activePostId, postsForGrid]);
+
+  const handleRetry = useCallback(() => {
+    if (searchQuery) {
+      searchQueryResults.refetch();
+    } else {
+      postsQuery.refetch();
+    }
+  }, [searchQuery, searchQueryResults, postsQuery]);
+
   // --- RENDER ---
   const renderContent = () => {
-    if (isLoading) return <CircularProgress />;
-    if (isError) return <Typography color="error">Error loading posts.</Typography>;
+    if (isLoading) {
+      return (
+        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '300px' }}>
+          <CircularProgress />
+        </Box>
+      );
+    }
+    if (isError) {
+      return (
+        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, py: 8 }}>
+          <ErrorIcon sx={{ fontSize: 48, color: 'error.main' }} />
+          <Typography color="error">{t('status.loadError')}</Typography>
+          <Button variant="outlined" onClick={handleRetry}>{t('actions.retry')}</Button>
+        </Box>
+      );
+    }
 
     return (
       <>
@@ -327,21 +309,31 @@ const HomePage = () => {
           onOpenRelevanceFilter={() => setRelevanceFilterOpen(true)}
           excludedCountOnPage={excludedCountOnPage}
           relevanceRemovedCount={relevanceRemovedCount}
+          onOpenImageSize={() => setImageSizeOpen(true)}
+          visibleCount={groupedDisplayPosts.length}
+          sandboxMin={isSandbox ? sandboxMin : null}
+          sandboxMax={isSandbox ? sandboxMax : null}
+          onClearSandbox={handleClearSandbox}
         />
-        {isLoading ? (
-          <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px', flexDirection: 'column', gap: 2 }}>
-            <CircularProgress size={60} />
-            <Typography variant="body1" color="text.secondary">Loading images...</Typography>
-          </Box>
-        ) : (
+        {groupedDisplayPosts.length > 0 ? (
           <MasonryGrid
-            posts={groupedPostsForGrid.displayPosts}
+            posts={groupedDisplayPosts}
             onImageClick={onImageClick}
             LazyImageCard={LazyImageCard}
             isLoading={isLoading}
             onLikeChange={handleLikeChange}
-            groupMap={groupedPostsForGrid.groupMap}
+            onNotify={handleNotify}
+            groupMap={groupMap}
+            columnWidth={columnWidth}
           />
+        ) : (
+          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, py: 8 }}>
+            <EmptyIcon sx={{ fontSize: 48, color: 'text.disabled' }} />
+            <Typography color="text.secondary">{t('status.noResults')}</Typography>
+            {searchQuery && (
+              <Button variant="outlined" size="small" onClick={clearSearch}>{t('actions.clearSearch')}</Button>
+            )}
+          </Box>
         )}
         <SimplePagination
           currentPage={currentPage}
@@ -371,6 +363,12 @@ const HomePage = () => {
         onThresholdChange={handleRelevanceThresholdChange}
         postScoresMap={postScoresMap}
       />
+      <ImageSizeModal
+        open={imageSizeOpen}
+        onClose={() => setImageSizeOpen(false)}
+        imageMinWidth={columnWidth}
+        onImageMinWidthChange={handleColumnWidthChange}
+      />
       <SearchBar
         onSearch={handleSearch}
         searchQuery={searchQuery}
@@ -393,17 +391,28 @@ const HomePage = () => {
         {renderContent()}
       </Box>
 
-      {/* Hidden caption content for PhotoSwipe */}
-      {postsForGrid.map((post) => (
+      {/* PhotoSwipe caption via Portal */}
+      {activePost && captionContainerRef.current && createPortal(
         <CaptionContent
-          key={`caption-${post.id}`}
-          post={post}
+          post={activePost}
           postsLikeState={postsLikeState}
           getTagColors={getTagColors}
           getTagTranslation={getTagTranslation}
-          handleTagClick={handleTagClick}
-        />
-      ))}
+          handleTagClick={closeLightboxAndSearch}
+        />,
+        captionContainerRef.current
+      )}
+
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={3000}
+        onClose={handleCloseSnackbar}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+      >
+        <Alert onClose={handleCloseSnackbar} severity={snackbar.severity} variant="filled" sx={{ width: '100%' }}>
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </AppLayout>
   );
 };
