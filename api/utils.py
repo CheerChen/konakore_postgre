@@ -48,7 +48,7 @@ def trigger_file_sync(action="start"):
     """
     try:
         # Container-to-container communication using service name
-        file_sync_url = os.getenv('FILE_SYNC_URL', 'http://file_sync:8090')
+        file_sync_url = os.getenv('FILE_SYNC_URL', 'http://worker:8090')
         
         response = requests.post(
             f"{file_sync_url}/trigger",

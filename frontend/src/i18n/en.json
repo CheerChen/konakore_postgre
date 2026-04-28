@@ -2,7 +2,8 @@
   "nav": {
     "gallery": "Gallery",
     "favorites": "Favorites",
-    "stats": "Stats"
+    "stats": "Stats",
+    "tasks": "Tasks"
   },
   "search": {
     "placeholder": "Enter tag name",
@@ -98,6 +99,12 @@
     "bucketWidth": "Bucket width",
     "goToGallery": "Gallery",
     "goToFavorites": "Favorites"
+  },
+  "tasks": {
+    "title": "Tasks",
+    "subtitle": "Worker progress and sync status",
+    "refresh": "Refresh",
+    "empty": "No task state yet. Start the worker to initialize progress."
   },
   "status": {
     "loadError": "Failed to load",

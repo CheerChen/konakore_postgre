@@ -1,6 +1,6 @@
 import React from 'react';
 import { AppBar, Toolbar, Container, Box, Tab, Tabs, IconButton, Tooltip } from '@mui/material';
-import { PhotoLibrary as GalleryIcon, Favorite as FavoriteIcon, BarChart as StatsIcon, Translate as TranslateIcon } from '@mui/icons-material';
+import { PhotoLibrary as GalleryIcon, Favorite as FavoriteIcon, BarChart as StatsIcon, TaskAlt as TasksIcon, Translate as TranslateIcon } from '@mui/icons-material';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
@@ -8,7 +8,7 @@ const AppLayout = ({ children }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const { t, i18n } = useTranslation();
-  const currentTab = ['/favorites', '/stats'].includes(location.pathname) ? location.pathname : '/';
+  const currentTab = ['/favorites', '/stats', '/tasks'].includes(location.pathname) ? location.pathname : '/';
 
   const toggleLanguage = () => {
     const newLang = i18n.language === 'zh-CN' ? 'en' : 'zh-CN';
@@ -47,6 +47,13 @@ const AppLayout = ({ children }) => {
                 iconPosition="start"
                 label={t('nav.stats')}
                 value="/stats"
+                sx={{ minHeight: 48, textTransform: 'none', fontWeight: 500 }}
+              />
+              <Tab
+                icon={<TasksIcon sx={{ fontSize: 20 }} />}
+                iconPosition="start"
+                label={t('nav.tasks')}
+                value="/tasks"
                 sx={{ minHeight: 48, textTransform: 'none', fontWeight: 500 }}
               />
             </Tabs>

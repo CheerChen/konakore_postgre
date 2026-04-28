@@ -14,7 +14,7 @@ from starlette.middleware.gzip import GZipMiddleware
 from dotenv import load_dotenv
 
 # Import routers
-from routers import posts, tags, users, stats
+from routers import posts, tags, users, stats, tasks
 
 load_dotenv()
 
@@ -66,6 +66,7 @@ app.include_router(posts.router)
 app.include_router(tags.router)
 app.include_router(users.router)
 app.include_router(stats.router)
+app.include_router(tasks.router)
 
 
 @app.get("/")
@@ -98,6 +99,9 @@ def read_root():
             },
             "users": {
                 "GET /v1/users/me/preferences": "Get current user's preference statistics"
+            },
+            "tasks": {
+                "GET /v1/tasks": "List worker task progress and status"
             }
         },
         "examples": {
