@@ -1,5 +1,4 @@
 # docker-compose.yaml
-version: '3.8'
 
 services:
   # 1. Simplified PostgreSQL Service
@@ -37,50 +36,35 @@ services:
     ports:
       - '3000:3000'
     environment:
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER:-konakore}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-secret}
+      - POSTGRES_DB=${POSTGRES_DB:-konakore}
+      - FILE_SYNC_URL=http://worker:8090
 
-  # 3. New Python Scheduler Service (replaces pg_cron)
-  scheduler:
-    image: konakore_postgre_scheduler:latest
+  # 3. Go Worker Service (scheduler + file sync)
+  worker:
+    image: konakore_postgre_worker:latest
     build:
       context: .
-      dockerfile: scheduler/Dockerfile
-    restart: always
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
-      - PYTHONUNBUFFERED=1
-
-  # 4. File Sync Service
-  file_sync:
-    image: konakore_postgre_file_sync:latest
-    build:
-      context: .
-      dockerfile: file_sync/Dockerfile
+      dockerfile: worker/Dockerfile
     restart: always
     depends_on:
       postgres:
         condition: service_healthy
     ports:
-      - '8090:8090'  # Expose webhook port for API communication
+      - '8090:8090'
     volumes:
       - ./wallpaper:/wallpaper
     environment:
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
-      - PYTHONUNBUFFERED=1
+      - POSTGRES_USER=${POSTGRES_USER:-konakore}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-secret}
+      - POSTGRES_DB=${POSTGRES_DB:-konakore}
+      - WORKER_HTTP_ADDR=:8090
       - ARIA2_URL=http://aria2:6800/jsonrpc
       - ARIA2_SECRET=
       - DOWNLOAD_BASE_PATH=/wallpaper
 
-  # 5. Frontend Service (React + Vite + Nginx)
+  # 4. Frontend Service (React + Vite + Nginx)
   frontend:
     image: konakore_postgre_frontend:latest
     build:

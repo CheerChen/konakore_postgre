@@ -1,0 +1,200 @@
+package main
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"strconv"
+	"syscall"
+	"time"
+
+	_ "github.com/lib/pq"
+)
+
+const serviceName = "konakore-worker"
+
+type Config struct {
+	PostgresHost     string
+	PostgresPort     string
+	PostgresDB       string
+	PostgresUser     string
+	PostgresPassword string
+
+	HTTPAddr         string
+	Aria2URL         string
+	Aria2Secret      string
+	DownloadBasePath string
+
+	RecentInterval      time.Duration
+	TagsInterval        time.Duration
+	BackfillStartDelay  time.Duration
+	BackfillRetryDelay  time.Duration
+	BackfillMaxBackoff  time.Duration
+	PostTagsBatchSize   int
+	LikesBatchSize      int
+	FileSyncIdleLimit   int
+	HTTPClientTimeout   time.Duration
+	ShutdownGracePeriod time.Duration
+}
+
+type Worker struct {
+	cfg            Config
+	db             *sql.DB
+	store          *TaskStore
+	log            *slog.Logger
+	httpClient     *http.Client
+	fileSync       *FileSyncController
+	cleanupCounter int
+}
+
+func main() {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		AddSource: true,
+		Level:     slog.LevelInfo,
+	})).With("service", serviceName)
+
+	cfg := loadConfig()
+	db, err := openDB(cfg)
+	if err != nil {
+		logger.Error("worker startup failed", "event", "startup_failed", "error", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	store := NewTaskStore(db, logger)
+	if err := store.EnsureSchema(ctx); err != nil {
+		logger.Error("failed to ensure task schema", "event", "schema_failed", "error", err)
+		os.Exit(1)
+	}
+
+	worker := &Worker{
+		cfg:        cfg,
+		db:         db,
+		store:      store,
+		log:        logger,
+		httpClient: &http.Client{Timeout: cfg.HTTPClientTimeout},
+	}
+	worker.fileSync = NewFileSyncController(worker)
+
+	if err := worker.seedTasks(ctx); err != nil {
+		logger.Error("failed to seed task state", "event", "task_seed_failed", "error", err)
+		os.Exit(1)
+	}
+
+	server := worker.newHTTPServer()
+	go func() {
+		logger.Info("worker http server starting", "event", "http_start", "addr", cfg.HTTPAddr)
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("worker http server failed", "event", "http_failed", "error", err)
+			stop()
+		}
+	}()
+
+	worker.startBackgroundTasks(ctx)
+
+	<-ctx.Done()
+	logger.Info("worker shutdown requested", "event", "shutdown_requested")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownGracePeriod)
+	defer cancel()
+	worker.fileSync.Stop("shutdown")
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		logger.Error("worker http shutdown failed", "event", "http_shutdown_failed", "error", err)
+	}
+	logger.Info("worker stopped", "event", "shutdown_complete")
+}
+
+func loadConfig() Config {
+	return Config{
+		PostgresHost:     envString("POSTGRES_HOST", "postgres"),
+		PostgresPort:     envString("POSTGRES_PORT", "5432"),
+		PostgresDB:       envString("POSTGRES_DB", "konakore"),
+		PostgresUser:     envString("POSTGRES_USER", "konakore"),
+		PostgresPassword: envString("POSTGRES_PASSWORD", "secret"),
+
+		HTTPAddr:         envString("WORKER_HTTP_ADDR", ":8090"),
+		Aria2URL:         envString("ARIA2_URL", "http://localhost:6800/jsonrpc"),
+		Aria2Secret:      envString("ARIA2_SECRET", ""),
+		DownloadBasePath: envString("DOWNLOAD_BASE_PATH", "/wallpaper"),
+
+		RecentInterval:      envDuration("RECENT_SYNC_INTERVAL", 48*time.Minute),
+		TagsInterval:        envDuration("TAGS_SYNC_INTERVAL", 7*24*time.Hour),
+		BackfillStartDelay:  envDuration("BACKFILL_START_DELAY", 2*time.Second),
+		BackfillRetryDelay:  envDuration("BACKFILL_RETRY_DELAY", 60*time.Second),
+		BackfillMaxBackoff:  envDuration("BACKFILL_MAX_BACKOFF", time.Hour),
+		PostTagsBatchSize:   envInt("POST_TAGS_BATCH_SIZE", 100),
+		LikesBatchSize:      envInt("LIKES_BATCH_SIZE", 100),
+		FileSyncIdleLimit:   envInt("FILE_SYNC_IDLE_LIMIT", 10),
+		HTTPClientTimeout:   envDuration("WORKER_HTTP_TIMEOUT", 120*time.Second),
+		ShutdownGracePeriod: envDuration("WORKER_SHUTDOWN_GRACE", 10*time.Second),
+	}
+}
+
+func envString(key, fallback string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func envInt(key string, fallback int) int {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func envDuration(key string, fallback time.Duration) time.Duration {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func openDB(cfg Config) (*sql.DB, error) {
+	dsn := "host=" + cfg.PostgresHost +
+		" port=" + cfg.PostgresPort +
+		" dbname=" + cfg.PostgresDB +
+		" user=" + cfg.PostgresUser +
+		" password=" + cfg.PostgresPassword +
+		" sslmode=disable"
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(8)
+	db.SetMaxIdleConns(4)
+	db.SetConnMaxLifetime(30 * time.Minute)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for {
+		if err := db.PingContext(ctx); err == nil {
+			return db, nil
+		}
+		select {
+		case <-ctx.Done():
+			db.Close()
+			return nil, ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+}

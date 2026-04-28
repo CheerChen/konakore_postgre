@@ -278,6 +278,28 @@ class StatsDistributionResponse(BaseModel):
     generated_at: float
 
 
+class TaskStateResponse(BaseModel):
+    """Worker task state with progress data."""
+    id: str
+    name: str
+    type: str
+    category: str = ""
+    status: str
+    desired_status: str
+    progress_pct: float
+    current_value: Optional[int] = None
+    total_value: Optional[int] = None
+    unit: Optional[str] = None
+    state: Dict[str, Any] = Field(default_factory=dict)
+    config: Dict[str, Any] = Field(default_factory=dict)
+    error_message: Optional[str] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    last_run_at: Optional[datetime] = None
+    next_run_at: Optional[datetime] = None
+    updated_at: datetime
+
+
 # ============================================================================
 # Helper Functions
 # ============================================================================

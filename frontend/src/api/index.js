@@ -98,3 +98,8 @@ export const getStatsDistribution = async (idMin, idMax) => {
   const response = await apiClient.get(`/v1/stats/distribution?${params}`);
   return response.data;
 };
+
+export const getTasks = async () => {
+  const response = await apiClient.get('/v1/tasks');
+  return response.data;
+};

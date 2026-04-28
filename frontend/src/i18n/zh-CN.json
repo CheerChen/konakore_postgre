@@ -2,7 +2,8 @@
   "nav": {
     "gallery": "Gallery",
     "favorites": "Favorites",
-    "stats": "Stats"
+    "stats": "Stats",
+    "tasks": "Tasks"
   },
   "search": {
     "placeholder": "输入标签名称",
@@ -98,6 +99,12 @@
     "bucketWidth": "桶宽",
     "goToGallery": "画廊",
     "goToFavorites": "收藏"
+  },
+  "tasks": {
+    "title": "Tasks",
+    "subtitle": "Worker 进度与同步状态",
+    "refresh": "刷新",
+    "empty": "还没有任务状态。启动 worker 后会初始化进度。"
   },
   "status": {
     "loadError": "加载失败",
