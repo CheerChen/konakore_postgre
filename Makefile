@@ -12,13 +12,11 @@ REGISTRY_URL ?= 192.168.0.110:5000
 API_SERVICE_NAME := api
 WORKER_SERVICE_NAME := worker
 FRONTEND_SERVICE_NAME := frontend
-POSTGRES_SERVICE_NAME := postgres
 
 # Image names in your private registry
 API_IMAGE_NAME := my-konakore-api
 WORKER_IMAGE_NAME := my-konakore-worker
 FRONTEND_IMAGE_NAME := my-konakore-frontend
-POSTGRES_IMAGE_NAME := my-konakore-postgre
 
 # Image version/tag
 TAG ?= latest
@@ -30,7 +28,6 @@ PROJECT_NAME := $(shell basename $(CURDIR))
 LOCAL_API_IMAGE := $(PROJECT_NAME)_$(API_SERVICE_NAME)
 LOCAL_WORKER_IMAGE := $(PROJECT_NAME)_$(WORKER_SERVICE_NAME)
 LOCAL_FRONTEND_IMAGE := $(PROJECT_NAME)_$(FRONTEND_SERVICE_NAME)
-LOCAL_POSTGRES_IMAGE := $(PROJECT_NAME)_$(POSTGRES_SERVICE_NAME)
 
 
 # --- Local Development ---
@@ -41,7 +38,7 @@ uv-lock:
 	@echo "--> Generating uv.lock file for the Python API service..."
 	cd api && uv lock
 
-# Build the custom docker images for api, worker, frontend, and postgres
+# Build the custom docker images for api, worker, and frontend
 build:
 	@echo "--> Building local Docker images..."
 	docker-compose build
@@ -99,7 +96,6 @@ tag: build
 	docker tag $(LOCAL_API_IMAGE) $(REGISTRY_URL)/$(API_IMAGE_NAME):$(TAG)
 	docker tag $(LOCAL_WORKER_IMAGE) $(REGISTRY_URL)/$(WORKER_IMAGE_NAME):$(TAG)
 	docker tag $(LOCAL_FRONTEND_IMAGE) $(REGISTRY_URL)/$(FRONTEND_IMAGE_NAME):$(TAG)
-	docker tag $(LOCAL_POSTGRES_IMAGE) $(REGISTRY_URL)/$(POSTGRES_IMAGE_NAME):$(TAG)
 
 # Push the tagged images to the private registry
 push:
@@ -107,11 +103,10 @@ push:
 	docker push $(REGISTRY_URL)/$(API_IMAGE_NAME):$(TAG)
 	docker push $(REGISTRY_URL)/$(WORKER_IMAGE_NAME):$(TAG)
 	docker push $(REGISTRY_URL)/$(FRONTEND_IMAGE_NAME):$(TAG)
-	docker push $(REGISTRY_URL)/$(POSTGRES_IMAGE_NAME):$(TAG)
 
 # Perform the full release cycle for all images
 release: tag push
-	@echo "--> Release for api, worker, frontend, and postgres images is complete."
+	@echo "--> Release for api, worker, and frontend images is complete."
 
 
 # --- Portainer Remote Deployment ---
@@ -202,7 +197,7 @@ help:
 	@echo ""
 	@echo "Local Development:"
 	@echo "  uv-lock        Generate uv.lock file for the Python API service"
-	@echo "  build          Build Docker images for api, worker, frontend, and postgres"
+	@echo "  build          Build Docker images for api, worker, and frontend"
 	@echo "  build-frontend Build only the frontend Docker image"
 	@echo "  dev-frontend   Start frontend in development mode (outside Docker)"
 	@echo "  up             Start services in detached mode"
@@ -214,7 +209,7 @@ help:
 	@echo "  logs-frontend  Tail logs from the frontend service"
 	@echo ""
 	@echo "Deployment:"
-	@echo "  tag            Tag the api, worker, frontend, and postgres images for the registry"
+	@echo "  tag            Tag the api, worker, and frontend images for the registry"
 	@echo "  push           Push the tagged images to the registry"
 	@echo "  release        Build, tag, and push all custom images"
 	@echo ""
