@@ -11,8 +11,7 @@ from models import (
     GetPostResponse, ToggleLikeResponse,
     db_post_to_api
 )
-from utils import get_db_connection, trigger_file_sync
-from routers.users import _invalidate_relevance_cache
+from utils import get_db_connection, trigger_file_sync, trigger_profile_update
 
 router = APIRouter(prefix="/v1/posts", tags=["posts"])
 logger = logging.getLogger(__name__)
@@ -89,10 +88,15 @@ def list_posts(
                 
                 # Get paginated data for liked_artists filter
                 cur.execute("""
-                    SELECT DISTINCT p.id, p.raw_data, p.is_processed, p.is_liked, p.last_synced_at
+                    SELECT DISTINCT p.id, p.raw_data, p.is_processed, p.is_liked, p.last_synced_at,
+                           CASE WHEN p.tag_embedding IS NOT NULL AND up.embedding IS NOT NULL
+                                THEN NULLIF(1 - (p.tag_embedding <=> up.embedding), 'NaN'::float8)
+                                ELSE NULL
+                           END AS similarity
                     FROM posts p
+                    LEFT JOIN user_profile up ON up.id = 1
                     WHERE EXISTS (
-                        SELECT 1 
+                        SELECT 1
                         FROM post_tags pt
                         INNER JOIN tags t ON pt.tag_id = t.id
                         WHERE pt.post_id = p.id
@@ -111,26 +115,39 @@ def list_posts(
                     ORDER BY p.id DESC
                     LIMIT %s OFFSET %s
                 """, (limit, offset))
-                
+
             elif liked_filter is True:
                 # Original liked filter logic
                 cur.execute("SELECT COUNT(*) FROM posts WHERE is_liked = TRUE")
                 total_count = cur.fetchone()['count']
-                
-                cur.execute(
-                    "SELECT id, raw_data, is_processed, is_liked, last_synced_at FROM posts WHERE is_liked = TRUE ORDER BY id DESC LIMIT %s OFFSET %s",
-                    (limit, offset)
-                )
-                
+
+                cur.execute("""
+                    SELECT p.id, p.raw_data, p.is_processed, p.is_liked, p.last_synced_at,
+                           CASE WHEN p.tag_embedding IS NOT NULL AND up.embedding IS NOT NULL
+                                THEN NULLIF(1 - (p.tag_embedding <=> up.embedding), 'NaN'::float8)
+                                ELSE NULL
+                           END AS similarity
+                    FROM posts p
+                    LEFT JOIN user_profile up ON up.id = 1
+                    WHERE p.is_liked = TRUE
+                    ORDER BY p.id DESC LIMIT %s OFFSET %s
+                """, (limit, offset))
+
             else:
                 # No filter - return all posts
                 cur.execute("SELECT COUNT(*) FROM posts")
                 total_count = cur.fetchone()['count']
-                
-                cur.execute(
-                    "SELECT id, raw_data, is_processed, is_liked, last_synced_at FROM posts ORDER BY id DESC LIMIT %s OFFSET %s",
-                    (limit, offset)
-                )
+
+                cur.execute("""
+                    SELECT p.id, p.raw_data, p.is_processed, p.is_liked, p.last_synced_at,
+                           CASE WHEN p.tag_embedding IS NOT NULL AND up.embedding IS NOT NULL
+                                THEN NULLIF(1 - (p.tag_embedding <=> up.embedding), 'NaN'::float8)
+                                ELSE NULL
+                           END AS similarity
+                    FROM posts p
+                    LEFT JOIN user_profile up ON up.id = 1
+                    ORDER BY p.id DESC LIMIT %s OFFSET %s
+                """, (limit, offset))
             
             db_posts = cur.fetchall()
             
@@ -175,18 +192,34 @@ def list_posts_sandbox(
             range_clause = "id >= %s AND id <= %s"
             range_params = (id_min, id_max)
 
+            similarity_expr = """
+                CASE WHEN p.tag_embedding IS NOT NULL AND up.embedding IS NOT NULL
+                     THEN NULLIF(1 - (p.tag_embedding <=> up.embedding), 'NaN'::float8)
+                     ELSE NULL
+                END AS similarity
+            """
+            range_p = "p.id >= %s AND p.id <= %s"
+
             if liked is True:
                 cur.execute(f"SELECT COUNT(*) as count FROM posts WHERE {range_clause} AND is_liked = TRUE", range_params)
                 total_count = cur.fetchone()['count']
                 cur.execute(
-                    f"SELECT id, raw_data, is_processed, is_liked, last_synced_at FROM posts WHERE {range_clause} AND is_liked = TRUE ORDER BY id DESC LIMIT %s OFFSET %s",
+                    f"""SELECT p.id, p.raw_data, p.is_processed, p.is_liked, p.last_synced_at, {similarity_expr}
+                        FROM posts p
+                        LEFT JOIN user_profile up ON up.id = 1
+                        WHERE {range_p} AND p.is_liked = TRUE
+                        ORDER BY p.id DESC LIMIT %s OFFSET %s""",
                     (*range_params, limit, offset)
                 )
             else:
                 cur.execute(f"SELECT COUNT(*) as count FROM posts WHERE {range_clause}", range_params)
                 total_count = cur.fetchone()['count']
                 cur.execute(
-                    f"SELECT id, raw_data, is_processed, is_liked, last_synced_at FROM posts WHERE {range_clause} ORDER BY id DESC LIMIT %s OFFSET %s",
+                    f"""SELECT p.id, p.raw_data, p.is_processed, p.is_liked, p.last_synced_at, {similarity_expr}
+                        FROM posts p
+                        LEFT JOIN user_profile up ON up.id = 1
+                        WHERE {range_p}
+                        ORDER BY p.id DESC LIMIT %s OFFSET %s""",
                     (*range_params, limit, offset)
                 )
 
@@ -235,7 +268,14 @@ def get_post(post_id: int):
     with get_db_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
-                "SELECT id, raw_data, is_processed, is_liked, last_synced_at FROM posts WHERE id = %s",
+                """SELECT p.id, p.raw_data, p.is_processed, p.is_liked, p.last_synced_at,
+                          CASE WHEN p.tag_embedding IS NOT NULL AND up.embedding IS NOT NULL
+                               THEN NULLIF(1 - (p.tag_embedding <=> up.embedding), 'NaN'::float8)
+                               ELSE NULL
+                          END AS similarity
+                   FROM posts p
+                   LEFT JOIN user_profile up ON up.id = 1
+                   WHERE p.id = %s""",
                 (post_id,)
             )
             db_post = cur.fetchone()
@@ -275,7 +315,7 @@ def like_post(post_id: int):
                     (post_id,)
                 )
                 conn.commit()
-                _invalidate_relevance_cache()
+                trigger_profile_update(post_id)
 
                 # Trigger file_sync service for newly liked post
                 trigger_success = trigger_file_sync("start")
@@ -318,7 +358,7 @@ def unlike_post(post_id: int):
                     (post_id,)
                 )
                 conn.commit()
-                _invalidate_relevance_cache()
+                trigger_profile_update(post_id)
 
             return ToggleLikeResponse(
                 post_id=post_id,

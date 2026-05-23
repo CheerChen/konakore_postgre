@@ -1,4 +1,4 @@
-import { getTags, getRelevanceWeights } from '../api';
+import { getTags } from '../api';
 
 // Tag类型常量定义
 export const TAG_TYPES = {
@@ -7,26 +7,6 @@ export const TAG_TYPES = {
   COPYRIGHT: 3,
   CHARACTER: 4,
   COMPANY: 6
-};
-
-// TF-IDF混合排序的权重配置
-export const TFIDF_HYBRID_CONFIG = {
-  profileWeight: 0.8,    // TF-IDF分数权重
-  qualityWeight: 0.15,   // 质量分数权重 
-  curationWeight: 0.05,  // 策展分数权重
-  curationMap: {
-    's': 1.0,  // Safe
-    'q': 0.9,  // Questionable  
-    'e': 0.7   // Explicit
-  },
-  typeWeights: {
-    [TAG_TYPES.GENERAL]: 0.4,   // General
-    [TAG_TYPES.ARTIST]: 3.0,    // Artist
-    [TAG_TYPES.COPYRIGHT]: 2.5, // Copyright/series
-    [TAG_TYPES.CHARACTER]: 2.0, // Character
-    5: 0.1,                     // Meta (type 5)
-    [TAG_TYPES.COMPANY]: 2.0    // Brand/studio
-  }
 };
 
 // TAGME标签列表 - 这些标签在计算时会被完全忽略
@@ -45,6 +25,11 @@ export const DEFAULT_EXCLUDED_POST_TAGS = [
 
 const EXCLUDED_POST_TAGS_STORAGE_KEY = 'konakore_excluded_post_tags_config';
 const RELEVANCE_FILTER_STORAGE_KEY = 'konakore_relevance_filter_config';
+// Bumped to 'cosine-v1' when threshold semantics switched from TF-IDF SUM
+// (unbounded) to cosine similarity ([0, 1]). On first load with a newer
+// version, any persisted threshold is reset to 0.
+const RELEVANCE_FILTER_VERSION_KEY = 'konakore_relevance_filter_version';
+const RELEVANCE_FILTER_VERSION = 'cosine-v1';
 
 // 检查是否为需要排除的tagme类型标签
 export const isTagmeTag = (tagName) => {
@@ -113,13 +98,9 @@ class TagManager {
     // 合并所有现有的全局状态
     this.state = {
       tags: new Set(),                    // 原 globalTagsCache
-      tagInfo: new Map(),                 // 原 globalTagInfoCache  
+      tagInfo: new Map(),                 // 原 globalTagInfoCache
       translations: null,                 // 原 globalTagTranslations
       translationObserver: null,          // MutationObserver实例
-      preferencesLastFetch: null,         // 上次获取偏好数据的时间（已废弃，保留兼容）
-      relevanceWeights: null,             // 后端计算的 TF-IDF weight map
-      relevanceWeightsLastFetch: null,    // 上次获取 weights 的时间
-      isFetchingWeights: false,           // 防止重复请求 weights
       isFetchingTranslations: false,      // 防止重复请求翻译文件
 
       excludedPostTagsConfig: {
@@ -187,6 +168,13 @@ class TagManager {
 
   loadRelevanceFilterConfigFromStorage() {
     try {
+      // Migrate stale TF-IDF SUM thresholds (unbounded) to cosine ([0, 1]).
+      const storedVersion = localStorage.getItem(RELEVANCE_FILTER_VERSION_KEY);
+      if (storedVersion !== RELEVANCE_FILTER_VERSION) {
+        localStorage.removeItem(RELEVANCE_FILTER_STORAGE_KEY);
+        localStorage.setItem(RELEVANCE_FILTER_VERSION_KEY, RELEVANCE_FILTER_VERSION);
+        return;
+      }
       const raw = localStorage.getItem(RELEVANCE_FILTER_STORAGE_KEY);
       if (!raw) return;
       const parsed = JSON.parse(raw);
@@ -396,65 +384,6 @@ class TagManager {
       this.notify({ type: 'tags-added', data: tags });
     }
     return added;
-  }
-
-  // ===== 用户偏好管理 =====
-
-  /**
-   * 从后端获取 TF-IDF 权重（替代前端 learnTfIdf）
-   * @param {boolean} forceRefresh - 是否强制刷新
-   * @returns {Map} tag -> weight 权重映射
-   */
-  async fetchRelevanceWeights(forceRefresh = false) {
-    if (this.state.isFetchingWeights) {
-      return this.state.relevanceWeights;
-    }
-
-    const now = Date.now();
-    const cacheTime = 30 * 60 * 1000; // 30 minutes
-
-    if (!forceRefresh &&
-      this.state.relevanceWeights &&
-      this.state.relevanceWeightsLastFetch &&
-      (now - this.state.relevanceWeightsLastFetch) < cacheTime) {
-      return this.state.relevanceWeights;
-    }
-
-    try {
-      this.state.isFetchingWeights = true;
-      const response = await getRelevanceWeights();
-
-      // Convert plain object to Map
-      const weightMap = new Map(Object.entries(response.weights).map(
-        ([tag, weight]) => [tag, weight]
-      ));
-
-      this.state.relevanceWeights = weightMap;
-      this.state.relevanceWeightsLastFetch = now;
-
-      console.log(`✅ Loaded ${weightMap.size} relevance weights from backend`);
-
-      return weightMap;
-    } catch (error) {
-      console.warn('Failed to fetch relevance weights:', error);
-      return this.state.relevanceWeights || new Map();
-    } finally {
-      this.state.isFetchingWeights = false;
-    }
-  }
-
-  /**
-   * 计算单个 post 的相关度分数
-   * @param {Object} post - post 对象
-   * @param {Map} weightMap - learnTfIdf 返回的权重映射
-   * @returns {number} 相关度分数（SUM of weights）
-   */
-  scorePost(post, weightMap) {
-    const tagsString = post.data?.tags ?? post.tags ?? '';
-    if (typeof tagsString !== 'string') return 0;
-
-    const tags = tagsString.split(' ').filter(Boolean);
-    return tags.reduce((sum, tag) => sum + (weightMap.get(tag) || 0), 0);
   }
 
   sortPosts(posts, compareFn) {

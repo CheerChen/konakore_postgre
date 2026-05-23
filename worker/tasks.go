@@ -61,13 +61,29 @@ var taskDefs = map[string]TaskDefinition{
 			"idle_limit": 10,
 		},
 	},
+	"embeddings": {
+		ID:       "embeddings",
+		Name:     "Compute tag embeddings",
+		Type:     "worker",
+		Category: "embeddings",
+		Config: map[string]any{
+			"batch_size": 100,
+		},
+	},
+	"embeddings-rebuild": {
+		ID:       "embeddings-rebuild",
+		Name:     "Rebuild tag embeddings",
+		Type:     "oneshot",
+		Category: "embeddings",
+		Config:   map[string]any{},
+	},
 }
 
 func (w *Worker) seedTasks(ctx context.Context) error {
 	for id, def := range taskDefs {
 		status := "stopped"
 		desired := "running"
-		if id == "file-sync" {
+		if id == "file-sync" || id == "embeddings-rebuild" {
 			desired = "stopped"
 		}
 		if id == "sync-recent" || id == "sync-tags" {
@@ -86,6 +102,7 @@ func (w *Worker) startBackgroundTasks(ctx context.Context) {
 	go w.runTagsScheduler(ctx)
 	go w.runPostTags(ctx)
 	go w.runLikesMigration(ctx)
+	go w.runEmbeddings(ctx)
 }
 
 func taskDef(id string) TaskDefinition {

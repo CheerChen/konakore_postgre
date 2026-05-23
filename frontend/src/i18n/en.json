@@ -24,6 +24,7 @@
     "label": "Sort by",
     "score": "Score (high to low)",
     "id": "ID (newest first)",
+    "similarity": "Similarity (high to low)",
     "fileSize": "File size (large first)",
     "resolution": "Resolution (large first)",
     "wideFirst": "Widescreen first",

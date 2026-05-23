@@ -11,6 +11,10 @@ function sortPosts(posts, sortOption) {
         return (b.data.score || 0) - (a.data.score || 0);
       case 'id':
         return (b.id || 0) - (a.id || 0);
+      case 'similarity':
+        // post.similarity comes from the API (cosine to user profile).
+        // null (post not embedded yet) sorts to the bottom.
+        return (b.similarity ?? 0) - (a.similarity ?? 0);
       case 'file_size':
         return (b.data.file_size || 0) - (a.data.file_size || 0);
       case 'resolution': {

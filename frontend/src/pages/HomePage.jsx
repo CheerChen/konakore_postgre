@@ -32,7 +32,6 @@ const HomePage = () => {
   const [postsLikeState, setPostsLikeState] = useState({});
   const [excludedTagsOpen, setExcludedTagsOpen] = useState(false);
   const [relevanceFilterOpen, setRelevanceFilterOpen] = useState(false);
-  const [weightMap, setWeightMap] = useState(new Map());
   const [imageSizeOpen, setImageSizeOpen] = useState(false);
   const [columnWidth, setColumnWidth] = useState(() => {
     const saved = localStorage.getItem('konakore_column_width');
@@ -77,17 +76,6 @@ const HomePage = () => {
     setSearchParams({}, { replace: true });
     setCurrentPage(1);
   }, [setSearchParams]);
-
-  // 从后端获取 TF-IDF 权重
-  useEffect(() => {
-    let cancelled = false;
-    tagManager.fetchRelevanceWeights().then(weights => {
-      if (!cancelled && weights?.size) {
-        setWeightMap(weights);
-      }
-    });
-    return () => { cancelled = true; };
-  }, []);
 
   // 当页面或筛选条件变化时，获取并缓存tag信息
   useEffect(() => {
@@ -208,15 +196,17 @@ const HomePage = () => {
     totalPosts = postsData?.pagination?.total_items || 0;
   }
 
-  // 预计算所有 post 的相关度分数（使用后端 TF-IDF 权重）
+  // similarity 由后端在 /v1/posts 响应里直接返回（cosine 相似度，[0,1]）。
+  // 未 embed 的 post (post.similarity == null) 临时分数为 0，排序时沉底，
+  // 设了 threshold > 0 时也会被过滤掉。
   const postScoresMap = useMemo(() => {
     const map = new Map();
-    if (!posts?.length || !weightMap.size) return map;
+    if (!posts?.length) return map;
     posts.forEach(post => {
-      map.set(post.id, tagManager.scorePost(post, weightMap));
+      if (post.similarity != null) map.set(post.id, post.similarity);
     });
     return map;
-  }, [posts, weightMap]);
+  }, [posts]);
 
   // --- MEMOIZED DATA FOR RENDERING ---
   const {

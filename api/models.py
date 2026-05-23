@@ -18,6 +18,10 @@ class Post(BaseModel):
     processed: bool = Field(default=False, description="Whether the post has been processed")
     liked: bool = Field(default=False, description="Whether the post is liked by the user")
     update_time: datetime = Field(..., description="Last sync timestamp")
+    similarity: Optional[float] = Field(
+        default=None,
+        description="Cosine similarity between this post's tag embedding and the user profile, in [0,1]. NULL when either side has no embedding.",
+    )
 
     class Config:
         json_schema_extra = {
@@ -218,14 +222,6 @@ class ListLikedPostsResponse(BaseModel):
     pagination: PaginationInfo
 
 
-class RelevanceWeightsResponse(BaseModel):
-    """Response model for user relevance weights (TF-IDF)."""
-    weights: Dict[str, float] = Field(..., description="Tag name -> TF-IDF weight")
-    total_posts: int = Field(..., description="Total posts count used for IDF")
-    liked_posts_count: int = Field(..., description="Number of liked posts used for TF")
-    generated_at: float = Field(..., description="Unix timestamp of generation")
-
-
 class ErrorDetail(BaseModel):
     """Error detail structure following AIP-193."""
     code: str
@@ -315,7 +311,8 @@ def db_post_to_api(db_row: dict) -> dict:
         "data": db_row["raw_data"],
         "processed": db_row.get("is_processed", False),
         "liked": db_row.get("is_liked", False),
-        "update_time": db_row["last_synced_at"]
+        "update_time": db_row["last_synced_at"],
+        "similarity": db_row.get("similarity"),
     }
 
 

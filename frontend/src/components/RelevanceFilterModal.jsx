@@ -201,7 +201,7 @@ export default function RelevanceFilterModal({
                             <Box sx={{ px: 1 }}>
                                 <Typography variant="body2" gutterBottom>
                                     {t('filter.relevanceThreshold', {
-                                        value: sliderValue.toFixed(1),
+                                        value: sliderValue.toFixed(2),
                                         pass: filteredStats.pass,
                                         removed: filteredStats.removed
                                     })}
@@ -214,9 +214,9 @@ export default function RelevanceFilterModal({
                                     }}
                                     min={0}
                                     max={sliderMax}
-                                    step={sliderMax / 100 || 1}
+                                    step={sliderMax / 100 || 0.01}
                                     valueLabelDisplay="auto"
-                                    valueLabelFormat={(v) => v.toFixed(1)}
+                                    valueLabelFormat={(v) => v.toFixed(2)}
                                     disabled={!chartData.length}
                                 />
                             </Box>

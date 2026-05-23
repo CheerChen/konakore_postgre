@@ -24,6 +24,7 @@
     "label": "排序方式",
     "score": "Score (高到低)",
     "id": "ID (新到旧)",
+    "similarity": "相关度 (高到低)",
     "fileSize": "文件大小 (大到小)",
     "resolution": "分辨率 (大到小)",
     "wideFirst": "宽屏优先",

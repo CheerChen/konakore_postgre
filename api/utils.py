@@ -73,3 +73,33 @@ def trigger_file_sync(action="start"):
     except Exception as e:
         logger.error(f"[API] File sync trigger error: {e}")
         return False
+
+
+def trigger_profile_update(post_id: int) -> bool:
+    """
+    Fire-and-forget notification to the worker that a post's liked status
+    changed. The worker recomputes the user_profile vector asynchronously;
+    the API does not wait for completion.
+
+    Returns True if the worker accepted the request (202), False otherwise.
+    """
+    try:
+        worker_url = os.getenv('FILE_SYNC_URL', 'http://worker:8090')
+        response = requests.post(
+            f"{worker_url}/v1/profile:update",
+            json={"post_id": post_id},
+            timeout=5,
+        )
+        if response.status_code in (200, 202):
+            return True
+        logger.warning(
+            f"[API] Profile update rejected for post {post_id}: "
+            f"status={response.status_code} body={response.text}"
+        )
+        return False
+    except requests.exceptions.RequestException as e:
+        logger.warning(f"[API] Profile update request failed for post {post_id}: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"[API] Profile update unexpected error: {e}")
+        return False

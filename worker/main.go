@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -42,13 +43,14 @@ type Config struct {
 }
 
 type Worker struct {
-	cfg            Config
-	db             *sql.DB
-	store          *TaskStore
-	log            *slog.Logger
-	httpClient     *http.Client
-	fileSync       *FileSyncController
-	cleanupCounter int
+	cfg                   Config
+	db                    *sql.DB
+	store                 *TaskStore
+	log                   *slog.Logger
+	httpClient            *http.Client
+	fileSync              *FileSyncController
+	cleanupCounter        int
+	embeddingsRebuildLock sync.Mutex
 }
 
 func main() {

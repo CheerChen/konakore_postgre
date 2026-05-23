@@ -142,6 +142,7 @@ const PaginationControls = ({
             <Select value={sortOption} label={t('sort.label')} onChange={(e) => onSortChange(e.target.value)} disabled={isLoading}>
               <MenuItem value="score">{t('sort.score')}</MenuItem>
               <MenuItem value="id">{t('sort.id')}</MenuItem>
+              <MenuItem value="similarity">{t('sort.similarity')}</MenuItem>
               <MenuItem value="file_size">{t('sort.fileSize')}</MenuItem>
               <MenuItem value="resolution">{t('sort.resolution')}</MenuItem>
               <MenuItem value="waifu_pillow">{t('sort.wideFirst')}</MenuItem>

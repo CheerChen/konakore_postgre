@@ -62,11 +62,6 @@ export const getUserPreferences = async () => {
   return response.data;
 };
 
-export const getRelevanceWeights = async () => {
-  const response = await apiClient.get('/v1/users/me/relevance-weights');
-  return response.data;
-};
-
 export const getStatsOverview = async () => {
   const response = await apiClient.get('/v1/stats/overview');
   return response.data;
