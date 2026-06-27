@@ -71,14 +71,14 @@ const AppLayout = ({ children }) => {
         maxWidth="xl"
         sx={{
           maxWidth: '100%',
-          overflow: 'hidden',
+          overflow: 'visible',
           px: { xs: 1, sm: 2, md: 3 },
           flex: 1,
           display: 'flex',
           flexDirection: 'column'
         }}
       >
-        <Box component="main" sx={{ mb: 4, width: '100%', overflow: 'hidden', flex: 1 }}>
+        <Box component="main" sx={{ mb: 4, width: '100%', overflow: 'visible', flex: 1 }}>
           {children}
         </Box>
       </Container>

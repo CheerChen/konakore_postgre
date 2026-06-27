@@ -27,7 +27,7 @@ const MasonryGrid = ({ posts, onImageClick, LazyImageCard, isLoading, onLikeChan
   const renderPhoto = useCallback((_imgProps, { photo, index, width, height }) => (
     <Box
       key={photo.key}
-      sx={{ width, height, overflow: 'hidden' }}
+      sx={{ width, height, overflow: 'visible' }}
     >
       <CardComponent
         post={photo._post}
@@ -35,6 +35,7 @@ const MasonryGrid = ({ posts, onImageClick, LazyImageCard, isLoading, onLikeChan
         onImageClick={onImageClick}
         onLikeChange={onLikeChange}
         groupCount={groupMap?.get(photo._post.id)?.length || 0}
+        groupMembers={groupMap?.get(photo._post.id) || []}
         onNotify={onNotify}
       />
     </Box>
@@ -43,7 +44,7 @@ const MasonryGrid = ({ posts, onImageClick, LazyImageCard, isLoading, onLikeChan
   if (!posts.length || isLoading) return null;
 
   return (
-    <Box sx={{ width: '100%', overflow: 'hidden', px: { xs: 1, sm: 2 } }}>
+    <Box sx={{ width: '100%', overflow: 'visible', px: { xs: 1, sm: 2 } }}>
       <MasonryPhotoAlbum
         photos={photos}
         columns={columns}

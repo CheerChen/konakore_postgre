@@ -42,7 +42,7 @@ function sortPosts(posts, sortOption) {
 }
 
 /**
- * 排除标签过滤
+ * 排除标签过滤 — 统计用（按单帖计算，不含组级逻辑）
  */
 function filterByExcludedTags(posts, excludedTags) {
   if (!excludedTags.length) return posts;
@@ -55,7 +55,7 @@ function filterByExcludedTags(posts, excludedTags) {
 }
 
 /**
- * 相关度阈值过滤
+ * 相关度阈值过滤 — 统计用（按单帖计算，不含组级逻辑）
  */
 function filterByRelevance(posts, threshold, postScoresMap) {
   if (threshold <= 0 || !postScoresMap.size) return posts;
@@ -64,6 +64,7 @@ function filterByRelevance(posts, threshold, postScoresMap) {
 
 /**
  * 帖子分组（parent/child 合并显示）
+ * Returns groupMap: parentId → [parent, ...children], and hiddenIds (child ids).
  */
 function groupPosts(posts) {
   const childrenByParent = new Map();
@@ -87,8 +88,73 @@ function groupPosts(posts) {
     }
   });
 
-  const displayPosts = posts.filter(post => !hiddenIds.has(post.id));
-  return { displayPosts, groupMap };
+  return { groupMap, hiddenIds };
+}
+
+/**
+ * Apply excluded-tags filter at the GROUP level.
+ * A group survives if its parent survives; orphan children are filtered individually.
+ */
+function filterGroupsByExcludedTags(posts, groupMap, excludedTags) {
+  if (!excludedTags.length) return posts;
+  const parentIds = new Set(groupMap.keys());
+  return posts.filter(post => {
+    const isParent = parentIds.has(post.id);
+    const isChild = groupMap.has(post.data?.parent_id) &&
+      groupMap.get(post.data.parent_id).some(m => m.id === post.id);
+    // If this post is a group parent, its filter result governs the whole group.
+    // If it's a child, it was already hidden by grouping — keep it only if
+    // its parent passed (handled by parent filter below).
+    const tagsString = tagManager.getPostTagsString(post);
+    if (!tagsString) return true;
+    const postTags = tagsString.split(' ').filter(Boolean);
+    const passes = !excludedTags.some(t => postTags.includes(t));
+    if (isParent) return passes;
+    // Non-parent, non-grouped-child: filter individually
+    if (!isChild) return passes;
+    // Grouped child: only keep if parent passes (so groupMap stays intact)
+    const parent = groupMap.get(post.data.parent_id)[0];
+    const parentTagsString = tagManager.getPostTagsString(parent);
+    if (!parentTagsString) return true;
+    const parentTags = parentTagsString.split(' ').filter(Boolean);
+    return !excludedTags.some(t => parentTags.includes(t));
+  });
+}
+
+/**
+ * Apply relevance-threshold filter at the GROUP level.
+ * A group survives if the MAX score among its members >= threshold;
+ * orphan children (parent not in page) are filtered individually.
+ */
+function filterGroupsByRelevance(posts, groupMap, threshold, postScoresMap) {
+  if (threshold <= 0 || !postScoresMap.size) return posts;
+
+  // Pre-compute max score per group
+  const groupMaxScore = new Map();
+  groupMap.forEach((members, parentId) => {
+    const max = Math.max(...members.map(m => postScoresMap.get(m.id) || 0));
+    groupMaxScore.set(parentId, max);
+  });
+
+  // Build a lookup: childId -> parentId (for grouped children only)
+  const childToParent = new Map();
+  groupMap.forEach((members, parentId) => {
+    members.slice(1).forEach(m => childToParent.set(m.id, parentId));
+  });
+
+  return posts.filter(post => {
+    const parentId = childToParent.get(post.id);
+    if (parentId) {
+      // Grouped child — keep if group max score passes
+      return groupMaxScore.get(parentId) >= threshold;
+    }
+    if (groupMap.has(post.id)) {
+      // Group parent — keep if group max score passes
+      return groupMaxScore.get(post.id) >= threshold;
+    }
+    // Standalone post (no group) — filter by own score
+    return (postScoresMap.get(post.id) || 0) >= threshold;
+  });
 }
 
 /**
@@ -133,9 +199,10 @@ export function usePostsProcessing({
     return removed;
   }, [posts, relevanceThreshold, postScoresMap]);
 
-  // 主处理管线：合并 like 状态 → 排除标签 → 排序 → 相关度过滤
-  const postsForGrid = useMemo(() => {
-    if (!posts.length) return posts;
+  // 主处理管线：合并 like 状态 → 分组 → 排除标签 → 排序 → 相关度过滤
+  // 分组在过滤之前，确保父帖被过滤时整组一起移除，子帖不会成为孤儿。
+  const { postsForGrid, displayPosts, groupMap } = useMemo(() => {
+    if (!posts.length) return { postsForGrid: posts, displayPosts: posts, groupMap: new Map() };
 
     // 合并本地收藏状态
     const merged = posts.map(post => ({
@@ -145,23 +212,32 @@ export function usePostsProcessing({
         : post.liked
     }));
 
-    // 排除标签过滤
-    const afterExclude = filterByExcludedTags(merged, excludedTags);
+    // 先分组（在过滤之前，确保父帖子帖同进同出）
+    let gm = new Map();
+    let hiddenIds = new Set();
+    if (enableGrouping) {
+      const result = groupPosts(merged);
+      gm = result.groupMap;
+      hiddenIds = result.hiddenIds;
+    }
+
+    // 组级排除标签过滤
+    const afterExclude = filterGroupsByExcludedTags(merged, gm, excludedTags);
+
+    // 组级相关度过滤
+    const afterRelevance = filterGroupsByRelevance(afterExclude, gm, relevanceThreshold, postScoresMap);
 
     // 排序
-    const sorted = sortPosts(afterExclude, sortOption);
+    const sorted = sortPosts(afterRelevance, sortOption);
 
-    // 相关度过滤
-    return filterByRelevance(sorted, relevanceThreshold, postScoresMap);
-  }, [posts, sortOption, postsLikeState, excludedTags, relevanceThreshold, postScoresMap]);
+    // postsForGrid = all posts that survived filtering (including children, for PhotoSwipe)
+    // displayPosts = only visible posts (children hidden)
+    const dp = enableGrouping
+      ? sorted.filter(post => !hiddenIds.has(post.id))
+      : sorted;
 
-  // 分组
-  const { displayPosts, groupMap } = useMemo(() => {
-    if (!enableGrouping || !postsForGrid.length) {
-      return { displayPosts: postsForGrid, groupMap: new Map() };
-    }
-    return groupPosts(postsForGrid);
-  }, [postsForGrid, enableGrouping]);
+    return { postsForGrid: sorted, displayPosts: dp, groupMap: gm };
+  }, [posts, sortOption, postsLikeState, excludedTags, relevanceThreshold, postScoresMap, enableGrouping]);
 
   return {
     postsForGrid,

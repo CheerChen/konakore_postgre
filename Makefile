@@ -31,7 +31,7 @@ LOCAL_FRONTEND_IMAGE := $(PROJECT_NAME)_$(FRONTEND_SERVICE_NAME)
 
 
 # --- Local Development ---
-.PHONY: build up down restart logs logs-api logs-worker logs-frontend build-frontend dev-frontend uv-lock
+.PHONY: build up down restart logs logs-api logs-worker logs-frontend build-frontend local uv-lock
 
 # Generate uv.lock file for the Python API service (run this before building)
 uv-lock:
@@ -48,9 +48,15 @@ build-frontend:
 	@echo "--> Building frontend Docker image..."
 	docker-compose build frontend
 
-# Start frontend in development mode (outside Docker)
-dev-frontend:
-	@echo "--> Starting frontend in development mode..."
+# Start frontend locally against the remote API on pi.
+# Uses frontend/.env (VITE_API_TARGET); copies from .env.example if missing.
+local:
+	@echo "--> Starting frontend locally (API via frontend/.env)..."
+	@if [ ! -f frontend/.env ]; then \
+		echo "    frontend/.env not found, copying from .env.example..."; \
+		cp frontend/.env.example frontend/.env; \
+	fi
+	@echo "    VITE_API_TARGET=$$(grep -E '^VITE_API_TARGET=' frontend/.env | cut -d= -f2-)"
 	cd frontend && npm run dev
 
 # Start all services in detached mode
@@ -199,7 +205,7 @@ help:
 	@echo "  uv-lock        Generate uv.lock file for the Python API service"
 	@echo "  build          Build Docker images for api, worker, and frontend"
 	@echo "  build-frontend Build only the frontend Docker image"
-	@echo "  dev-frontend   Start frontend in development mode (outside Docker)"
+	@echo "  local          Start frontend locally, proxy API to pi via frontend/.env"
 	@echo "  up             Start services in detached mode"
 	@echo "  down           Stop and remove services"
 	@echo "  restart        Restart all services"

@@ -29,7 +29,9 @@ export function usePhotoSwipe({
   const lightboxRef = useRef(null);
   const slideshowRef = useRef({ interval: null, isPlaying: false });
   const groupMapRef = useRef(new Map());
-  const fullDataSourceRef = useRef([]);
+  // Flattened dataSource = each parent followed by its grouped children,
+  // so the whole page (children included) forms ONE PhotoSwipe gallery.
+  const postIdToIndexRef = useRef(new Map());
   const postsLikeStateRef = useRef({});
   const postsRef = useRef([]);
 
@@ -309,10 +311,6 @@ export function usePhotoSwipe({
       // Close cleanup
       pswp.on('close', () => {
         stopSlideshow(pswp);
-        if (fullDataSourceRef.current && fullDataSourceRef.current.length > 0) {
-          lightbox.options.dataSource = fullDataSourceRef.current;
-          fullDataSourceRef.current = [];
-        }
       });
     });
 
@@ -335,46 +333,54 @@ export function usePhotoSwipe({
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Sync dataSource when displayPosts change
+  // Sync dataSource when displayPosts / groupMap change.
+  // Build a flattened gallery: for each displayed (parent) post, append it
+  // and then its grouped children immediately after, so everything lives in
+  // a single PhotoSwipe gallery instead of isolated per-group sessions.
   useEffect(() => {
-    if (lightboxRef.current && displayPosts.length > 0) {
-      lightboxRef.current.options.dataSource = displayPosts.map(post => ({
+    if (!lightboxRef.current || displayPosts.length === 0) return;
+
+    const gm = groupMapRef.current;
+    const dataSource = [];
+    const indexMap = new Map();
+
+    const pushPost = (post) => {
+      indexMap.set(post.id, dataSource.length);
+      dataSource.push({
         src: getImageUrl(post.data?.sample_url || post.data?.jpeg_url || post.data?.file_url),
         msrc: getImageUrl(post.data?.preview_url),
         w: post.data.width,
         h: post.data.height,
         alt: post.data.tags,
         postId: post.id,
-      }));
-    }
-  }, [displayPosts]);
+      });
+    };
 
-  // onImageClick with group support
+    displayPosts.forEach(post => {
+      pushPost(post);
+      const members = gm.get(post.id);
+      // members[0] is the parent itself; append only the remaining children.
+      if (members && members.length > 1) {
+        for (let i = 1; i < members.length; i++) pushPost(members[i]);
+      }
+    });
+
+    lightboxRef.current.options.dataSource = dataSource;
+    postIdToIndexRef.current = indexMap;
+  }, [displayPosts, groupMap]);
+
+  // onImageClick — open the single shared gallery at the clicked post's
+  // flattened index. Children are already in the same dataSource, so no
+  // dataSource swapping is needed anymore.
   const onImageClick = useCallback((index) => {
     const lightbox = window.currentLightbox;
     if (!lightbox) return;
 
     const clickedPost = displayPosts[index];
-    const groupMembers = groupMapRef.current.get(clickedPost?.id);
+    if (!clickedPost) return;
 
-    if (groupMembers && groupMembers.length > 1) {
-      fullDataSourceRef.current = lightbox.options.dataSource;
-      lightbox.options.dataSource = groupMembers.map(post => ({
-        src: getImageUrl(post.data?.sample_url || post.data?.jpeg_url || post.data?.file_url),
-        msrc: getImageUrl(post.data?.preview_url),
-        w: post.data.width,
-        h: post.data.height,
-        alt: post.data.tags,
-        postId: post.id,
-      }));
-      lightbox.loadAndOpen(0);
-    } else {
-      fullDataSourceRef.current = [];
-      const realIndex = lightbox.options.dataSource.findIndex(
-        item => item.postId === clickedPost?.id
-      );
-      lightbox.loadAndOpen(realIndex >= 0 ? realIndex : index);
-    }
+    const targetIndex = postIdToIndexRef.current.get(clickedPost.id);
+    lightbox.loadAndOpen(targetIndex != null ? targetIndex : index);
   }, [displayPosts]);
 
   // 关闭 PhotoSwipe 并触发 tag 搜索

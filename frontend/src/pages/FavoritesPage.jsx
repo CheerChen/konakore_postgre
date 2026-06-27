@@ -276,7 +276,7 @@ const FavoritesPage = () => {
         maxWidth: '100%',
         minWidth: '100%',
         width: '100%',
-        overflow: 'hidden',
+        overflow: 'visible',
         px: { xs: 1, sm: 2, md: 3 },
         display: 'flex',
         flexDirection: 'column',
