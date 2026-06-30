@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   Box,
   Button,
@@ -17,11 +17,22 @@ const MAX_SIZE = 500;
 
 export default function ImageSizeModal({ open, onClose, imageMinWidth, onImageMinWidthChange }) {
   const { t } = useTranslation();
-  const [localValue, setLocalValue] = useState(imageMinWidth);
+  const [localValue, setLocalValue] = useState(() => imageMinWidth);
 
-  useEffect(() => {
-    if (open) setLocalValue(imageMinWidth);
-  }, [open, imageMinWidth]);
+  // Sync local draft when the modal opens or the source prop changes
+  // (ref-based prev comparison — no effect, no extra render with stale UI).
+  const prevOpenRef = useRef(open);
+  const prevImageMinWidthRef = useRef(imageMinWidth);
+  if (open !== prevOpenRef.current) {
+    prevOpenRef.current = open;
+    if (open) {
+      setLocalValue(imageMinWidth);
+      prevImageMinWidthRef.current = imageMinWidth;
+    }
+  } else if (open && imageMinWidth !== prevImageMinWidthRef.current) {
+    prevImageMinWidthRef.current = imageMinWidth;
+    setLocalValue(imageMinWidth);
+  }
 
   const handleChange = (_, value) => {
     setLocalValue(value);

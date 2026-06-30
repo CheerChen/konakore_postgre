@@ -18,7 +18,7 @@ export const getImageUrl = (url) => {
  * @param {number} height - 图片高度
  * @returns {boolean} 是否为 waifu pillow 格式
  */
-export const isWaifuPillow = (width, height) => {
+const isWaifuPillow = (width, height) => {
   if (!width || !height) return false;
   return (width / height) > 2;
 };
@@ -29,7 +29,7 @@ export const isWaifuPillow = (width, height) => {
  * @param {number} height - 图片高度
  * @returns {number} 宽高比
  */
-export const getAspectRatio = (width, height) => {
+const getAspectRatio = (width, height) => {
   if (!height || height === 0) return 0;
   return width / height;
 };

@@ -14,6 +14,9 @@ import {
 import AppLayout from '../components/AppLayout';
 import { getStatsOverview, getUserPreferences, getStatsDistribution } from '../api';
 
+// Static color map — module scope so it is not rebuilt every render.
+const RATING_COLORS = { s: '#4CAF50', q: '#FF9800', e: '#F44336' };
+
 // ============================================================
 // Sub-components
 // ============================================================
@@ -27,8 +30,8 @@ function SummaryCards({ totalPosts, totalLiked, ratio, t }) {
   ];
   return (
     <Box sx={{ display: 'flex', gap: 2, mb: 4, flexWrap: 'wrap' }}>
-      {cards.map((c, i) => (
-        <Paper key={i} sx={{ flex: 1, minWidth: 140, p: '20px 24px', bgcolor: 'background.paper', borderRadius: 3 }}>
+      {cards.map((c) => (
+        <Paper key={c.label} sx={{ flex: 1, minWidth: 140, p: '20px 24px', bgcolor: 'background.paper', borderRadius: 3 }}>
           <Typography sx={{ fontSize: 28, fontWeight: 700, color: c.color }}>{c.value}</Typography>
           <Typography sx={{ fontSize: 13, color: 'text.secondary', mt: 0.5 }}>{c.label}</Typography>
         </Paper>
@@ -56,14 +59,14 @@ function HeatMap({ buckets, t }) {
   return (
     <>
       <Box sx={{ display: 'flex', height: 28, borderRadius: 1.5, overflow: 'hidden', cursor: 'crosshair' }}>
-        {buckets.map((b, i) => {
+        {buckets.map((b) => {
           const intensity = (b.liked_count / Math.max(b.total_count, 1)) / maxRatio;
           const bg = intensity < 0.01
             ? '#1a1a1a'
             : `hsl(265, ${60 + intensity * 40}%, ${10 + intensity * 45}%)`;
           return (
             <Box
-              key={i}
+              key={`${b.id_start}-${b.id_end}`}
               onMouseMove={e => showTip(e, b)}
               onMouseLeave={hideTip}
               sx={{ flex: 1, bgcolor: bg, '&:hover': { opacity: 0.75 } }}
@@ -74,6 +77,129 @@ function HeatMap({ buckets, t }) {
       <AxisLabels buckets={buckets} />
       <Tooltip ref={tooltipRef} />
     </>
+  );
+}
+
+/** Selection popover — extracted from DensityChart */
+function SelectionPopover({ popoverRef, popoverPos, selectedSelection, handleGoToGallery, handleGoToFavorites, t }) {
+  if (!selectedSelection || !popoverPos) return null;
+  return (
+    <Box
+      ref={popoverRef}
+      sx={{
+        position: 'fixed',
+        left: popoverPos.left,
+        top: popoverPos.top,
+        transform: 'translateY(-100%)',
+        zIndex: 1300,
+        bgcolor: 'rgba(0,0,0,0.92)',
+        border: '1px solid #444',
+        borderRadius: 2,
+        p: '10px 14px',
+        fontSize: 12,
+        lineHeight: 1.7,
+        color: '#fff',
+        minWidth: 180,
+        pointerEvents: 'auto',
+      }}
+    >
+      <Box sx={{ fontWeight: 700, mb: 0.5 }}>
+        {t('stats.idRange', {
+          start: selectedSelection.idStart.toLocaleString(),
+          end: selectedSelection.idEnd.toLocaleString(),
+        })}
+      </Box>
+      <Box>{t('stats.total')}: {selectedSelection.totalCount.toLocaleString()}</Box>
+      <Box sx={{ color: '#B388FF' }}>
+        {t('stats.favoritesLegend')}: {selectedSelection.likedCount}
+      </Box>
+      <Box sx={{ mb: 1 }}>
+        {t('stats.ratio')}: {(selectedSelection.likedCount / Math.max(selectedSelection.totalCount, 1) * 100).toFixed(2)}%
+      </Box>
+      <Box sx={{ display: 'flex', gap: 1 }}>
+        <Button
+          size="small"
+          variant="contained"
+          onClick={handleGoToGallery}
+          endIcon={<ArrowForwardIcon sx={{ fontSize: '14px !important' }} />}
+          sx={{
+            fontSize: 11, py: 0.5, px: 1.5,
+            textTransform: 'none',
+            bgcolor: '#FF9E40',
+            '&:hover': { bgcolor: '#FFB74D' },
+          }}
+        >
+          {t('stats.goToGallery')}
+        </Button>
+        <Button
+          size="small"
+          variant="contained"
+          onClick={handleGoToFavorites}
+          endIcon={<ArrowForwardIcon sx={{ fontSize: '14px !important' }} />}
+          sx={{
+            fontSize: 11, py: 0.5, px: 1.5,
+            textTransform: 'none',
+            bgcolor: '#B388FF',
+            '&:hover': { bgcolor: '#CE93D8' },
+          }}
+        >
+          {t('stats.goToFavorites')}
+        </Button>
+      </Box>
+    </Box>
+  );
+}
+
+/** Single density bar — extracted from DensityChart.
+ *  `overlay` is a string variant ('none' | 'brush' | 'selected') to avoid
+ *  boolean-prop combinatorics. */
+function DensityBar({ b, i, maxTotal, maxLiked, overlay, brushLo, brushHi, selectedLo, selectedHi, isDragging, showTip, hideTip }) {
+  const inBrush = overlay === 'brush';
+  const inSelected = overlay === 'selected';
+  const isSingle = inSelected && selectedLo === selectedHi;
+  return (
+    <Box
+      key={`${b.id_start}-${b.id_end}`}
+      onMouseMove={e => { if (!isDragging.current) showTip(e, b); }}
+      onMouseLeave={hideTip}
+      sx={{ flex: 1, height: '100%', position: 'relative' }}
+    >
+      <Box sx={{
+        width: '100%', position: 'absolute', bottom: 0,
+        height: `${(b.total_count / maxTotal) * 100}%`,
+        bgcolor: '#2a2a2a', borderRadius: '2px 2px 0 0',
+        transition: 'height 0.4s ease',
+        '&:hover': { bgcolor: isDragging.current ? undefined : '#3a3a3a' },
+      }} />
+      <Box sx={{
+        width: '100%', position: 'absolute', bottom: 0, zIndex: 1,
+        height: `${(b.liked_count / maxLiked) * 80}%`,
+        bgcolor: 'primary.main', borderRadius: '2px 2px 0 0',
+        transition: 'height 0.4s ease',
+        '&:hover': { bgcolor: isDragging.current ? undefined : 'primary.light' },
+      }} />
+      {inBrush && (
+        <Box sx={{
+          position: 'absolute', inset: 0, zIndex: 2,
+          bgcolor: 'rgba(179, 136, 255, 0.2)',
+          borderLeft: i === brushLo ? '2px solid' : 'none',
+          borderRight: i === brushHi ? '2px solid' : 'none',
+          borderColor: 'primary.main',
+          transition: 'background-color 0.2s ease',
+        }} />
+      )}
+      {inSelected && (
+        <Box sx={{
+          position: 'absolute', inset: 0, zIndex: 2,
+          bgcolor: 'rgba(255, 158, 64, 0.3)',
+          borderTop: '2px solid #FF9E40',
+          borderLeft: i === selectedLo ? '2px solid #FF9E40' : 'none',
+          borderRight: i === selectedHi ? '2px solid #FF9E40' : 'none',
+          borderRadius: isSingle ? '2px 2px 0 0' : 0,
+          ...(isSingle ? { border: '2px solid #FF9E40' } : {}),
+        }} />
+      )}
+    </Box>
   );
 }
 
@@ -89,14 +215,13 @@ function DensityChart({ buckets: initialBuckets, t }) {
   const chartRef = useRef(null);
   const popoverRef = useRef(null);
 
-  const distQuery = useQuery({
+  const { data: distData, isFetching: distFetching } = useQuery({
     queryKey: ['stats-distribution', zoomRange?.idMin ?? null, zoomRange?.idMax ?? null],
     queryFn: () => getStatsDistribution(zoomRange?.idMin, zoomRange?.idMax),
     staleTime: 5 * 60 * 1000,
     keepPreviousData: true,
   });
 
-  const distData = distQuery.data;
   const buckets = distData?.buckets ?? initialBuckets;
   const isZoomed = zoomRange !== null;
   const numBuckets = buckets.length;
@@ -139,7 +264,7 @@ function DensityChart({ buckets: initialBuckets, t }) {
   }, [numBuckets]);
 
   const handleMouseDown = useCallback((e) => {
-    if (distQuery.isFetching) return;
+    if (distFetching) return;
     e.preventDefault();
     isDragging.current = true;
     hasDragged.current = false;
@@ -147,7 +272,7 @@ function DensityChart({ buckets: initialBuckets, t }) {
     setBrush({ startIdx: dragStartIdx.current, endIdx: dragStartIdx.current });
     setSelectedSelection(null);
     hideTip();
-  }, [distQuery.isFetching, getBucketIndex, hideTip]);
+  }, [distFetching, getBucketIndex, hideTip]);
 
   const handleMouseMove = useCallback((e) => {
     if (!isDragging.current) return;
@@ -279,10 +404,10 @@ function DensityChart({ buckets: initialBuckets, t }) {
             '&.Mui-disabled': { borderColor: '#333', color: '#555' },
           },
         }}>
-          <Button onClick={handleZoomOut} disabled={!isZoomed || distQuery.isFetching} startIcon={<ZoomOutIcon sx={{ fontSize: '14px !important' }} />}>
+          <Button onClick={handleZoomOut} disabled={!isZoomed || distFetching} startIcon={<ZoomOutIcon sx={{ fontSize: '14px !important' }} />}>
             {t('stats.zoomOut')}
           </Button>
-          <Button onClick={handleReset} disabled={!isZoomed || distQuery.isFetching} startIcon={<ResetIcon sx={{ fontSize: '14px !important' }} />}>
+          <Button onClick={handleReset} disabled={!isZoomed || distFetching} startIcon={<ResetIcon sx={{ fontSize: '14px !important' }} />}>
             {t('stats.resetZoom')}
           </Button>
         </ButtonGroup>
@@ -294,127 +419,42 @@ function DensityChart({ buckets: initialBuckets, t }) {
         sx={{
           display: 'flex', alignItems: 'flex-end', height: 180, gap: '1px',
           position: 'relative', userSelect: 'none',
-          opacity: distQuery.isFetching ? 0.5 : 1,
+          opacity: distFetching ? 0.5 : 1,
           transition: 'opacity 0.3s ease',
-          cursor: !distQuery.isFetching ? 'crosshair' : 'default',
+          cursor: !distFetching ? 'crosshair' : 'default',
         }}
       >
         {buckets.map((b, i) => {
           const inBrush = brush && i >= brushLo && i <= brushHi;
-          const inSelectedSelection = selectedSelection && i >= selectedLo && i <= selectedHi;
-          const isSingleSelectedBucket = selectedSelection && selectedLo === selectedHi;
+          const inSelected = selectedSelection && i >= selectedLo && i <= selectedHi;
+          const overlay = inSelected ? 'selected' : (inBrush ? 'brush' : 'none');
           return (
-            <Box
+            <DensityBar
               key={`${b.id_start}-${b.id_end}`}
-              onMouseMove={e => { if (!isDragging.current) showTip(e, b); }}
-              onMouseLeave={hideTip}
-              sx={{ flex: 1, height: '100%', position: 'relative' }}
-            >
-              <Box sx={{
-                width: '100%', position: 'absolute', bottom: 0,
-                height: `${(b.total_count / maxTotal) * 100}%`,
-                bgcolor: '#2a2a2a', borderRadius: '2px 2px 0 0',
-                transition: 'height 0.4s ease',
-                '&:hover': { bgcolor: isDragging.current ? undefined : '#3a3a3a' },
-              }} />
-              <Box sx={{
-                width: '100%', position: 'absolute', bottom: 0, zIndex: 1,
-                height: `${(b.liked_count / maxLiked) * 80}%`,
-                bgcolor: 'primary.main', borderRadius: '2px 2px 0 0',
-                transition: 'height 0.4s ease',
-                '&:hover': { bgcolor: isDragging.current ? undefined : 'primary.light' },
-              }} />
-              {inBrush && (
-                <Box sx={{
-                  position: 'absolute', inset: 0, zIndex: 2,
-                  bgcolor: 'rgba(179, 136, 255, 0.2)',
-                  borderLeft: i === brushLo ? '2px solid' : 'none',
-                  borderRight: i === brushHi ? '2px solid' : 'none',
-                  borderColor: 'primary.main',
-                  transition: 'background-color 0.2s ease',
-                }} />
-              )}
-              {inSelectedSelection && (
-                <Box sx={{
-                  position: 'absolute', inset: 0, zIndex: 2,
-                  bgcolor: 'rgba(255, 158, 64, 0.3)',
-                  borderTop: '2px solid #FF9E40',
-                  borderLeft: i === selectedLo ? '2px solid #FF9E40' : 'none',
-                  borderRight: i === selectedHi ? '2px solid #FF9E40' : 'none',
-                  borderRadius: isSingleSelectedBucket ? '2px 2px 0 0' : 0,
-                  ...(isSingleSelectedBucket ? { border: '2px solid #FF9E40' } : {}),
-                }} />
-              )}
-            </Box>
+              b={b}
+              i={i}
+              maxTotal={maxTotal}
+              maxLiked={maxLiked}
+              overlay={overlay}
+              brushLo={brushLo}
+              brushHi={brushHi}
+              selectedLo={selectedLo}
+              selectedHi={selectedHi}
+              isDragging={isDragging}
+              showTip={showTip}
+              hideTip={hideTip}
+            />
           );
         })}
       </Box>
-      {/* Selection popover */}
-      {selectedSelection && popoverPos && (
-        <Box
-          ref={popoverRef}
-          sx={{
-            position: 'fixed',
-            left: popoverPos.left,
-            top: popoverPos.top,
-            transform: 'translateY(-100%)',
-            zIndex: 1300,
-            bgcolor: 'rgba(0,0,0,0.92)',
-            border: '1px solid #444',
-            borderRadius: 2,
-            p: '10px 14px',
-            fontSize: 12,
-            lineHeight: 1.7,
-            color: '#fff',
-            minWidth: 180,
-            pointerEvents: 'auto',
-          }}
-        >
-          <Box sx={{ fontWeight: 700, mb: 0.5 }}>
-            {t('stats.idRange', {
-              start: selectedSelection.idStart.toLocaleString(),
-              end: selectedSelection.idEnd.toLocaleString(),
-            })}
-          </Box>
-          <Box>{t('stats.total')}: {selectedSelection.totalCount.toLocaleString()}</Box>
-          <Box sx={{ color: '#B388FF' }}>
-            {t('stats.favoritesLegend')}: {selectedSelection.likedCount}
-          </Box>
-          <Box sx={{ mb: 1 }}>
-            {t('stats.ratio')}: {(selectedSelection.likedCount / Math.max(selectedSelection.totalCount, 1) * 100).toFixed(2)}%
-          </Box>
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            <Button
-              size="small"
-              variant="contained"
-              onClick={handleGoToGallery}
-              endIcon={<ArrowForwardIcon sx={{ fontSize: '14px !important' }} />}
-              sx={{
-                fontSize: 11, py: 0.5, px: 1.5,
-                textTransform: 'none',
-                bgcolor: '#FF9E40',
-                '&:hover': { bgcolor: '#FFB74D' },
-              }}
-            >
-              {t('stats.goToGallery')}
-            </Button>
-            <Button
-              size="small"
-              variant="contained"
-              onClick={handleGoToFavorites}
-              endIcon={<ArrowForwardIcon sx={{ fontSize: '14px !important' }} />}
-              sx={{
-                fontSize: 11, py: 0.5, px: 1.5,
-                textTransform: 'none',
-                bgcolor: '#B388FF',
-                '&:hover': { bgcolor: '#CE93D8' },
-              }}
-            >
-              {t('stats.goToFavorites')}
-            </Button>
-          </Box>
-        </Box>
-      )}
+      <SelectionPopover
+        popoverRef={popoverRef}
+        popoverPos={popoverPos}
+        selectedSelection={selectedSelection}
+        handleGoToGallery={handleGoToGallery}
+        handleGoToFavorites={handleGoToFavorites}
+        t={t}
+      />
       <AxisLabels buckets={buckets} />
       <Tooltip ref={tooltipRef} />
     </>
@@ -422,26 +462,19 @@ function DensityChart({ buckets: initialBuckets, t }) {
 }
 
 /** Rating Breakdown Stacked Bars */
-function RatingBreakdown({ ratings, t }) {
-  const RATING_COLORS = { s: '#4CAF50', q: '#FF9800', e: '#F44336' };
-  const RATING_NAMES = { s: t('stats.safe'), q: t('stats.questionable'), e: t('stats.explicit') };
-
-  const allTotal = useMemo(() => ratings.reduce((acc, r) => acc + r.total_count, 0), [ratings]);
-  const likedTotal = useMemo(() => ratings.reduce((acc, r) => acc + r.liked_count, 0), [ratings]);
-  const tooltipRef = useRef(null);
-
-  const showTip = useCallback((e, name, count, total) => {
+function RatingBar({ label, ratings, getCount, total, ratingNames, tooltipRef, t }) {
+  const showTip = useCallback((e, name, count, totalVal) => {
     const tip = tooltipRef.current;
     if (!tip) return;
-    const pct = ((count / Math.max(total, 1)) * 100).toFixed(1);
+    const pct = ((count / Math.max(totalVal, 1)) * 100).toFixed(1);
     tip.innerHTML = `<b>${name}</b><br>${count.toLocaleString()} (${pct}%)`;
     tip.style.display = 'block';
     tip.style.left = Math.min(e.clientX + 12, window.innerWidth - 220) + 'px';
     tip.style.top = (e.clientY - 10) + 'px';
-  }, []);
-  const hideTip = useCallback(() => { if (tooltipRef.current) tooltipRef.current.style.display = 'none'; }, []);
+  }, [tooltipRef]);
+  const hideTip = useCallback(() => { if (tooltipRef.current) tooltipRef.current.style.display = 'none'; }, [tooltipRef]);
 
-  const renderBar = (label, getCount, total) => (
+  return (
     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
       <Typography sx={{ fontSize: 13, color: 'text.secondary', width: 70, flexShrink: 0 }}>{label}</Typography>
       <Box sx={{ flex: 1, height: 28, borderRadius: 1.5, overflow: 'hidden', display: 'flex', cursor: 'crosshair' }}>
@@ -451,7 +484,7 @@ function RatingBreakdown({ ratings, t }) {
           return (
             <Box
               key={r.rating}
-              onMouseMove={e => showTip(e, RATING_NAMES[r.rating], count, total)}
+              onMouseMove={e => showTip(e, ratingNames[r.rating], count, total)}
               onMouseLeave={hideTip}
               sx={{
                 width: `${pct}%`, height: '100%',
@@ -468,11 +501,19 @@ function RatingBreakdown({ ratings, t }) {
       </Box>
     </Box>
   );
+}
+
+function RatingBreakdown({ ratings, t }) {
+  const RATING_NAMES = { s: t('stats.safe'), q: t('stats.questionable'), e: t('stats.explicit') };
+
+  const allTotal = useMemo(() => ratings.reduce((acc, r) => acc + r.total_count, 0), [ratings]);
+  const likedTotal = useMemo(() => ratings.reduce((acc, r) => acc + r.liked_count, 0), [ratings]);
+  const tooltipRef = useRef(null);
 
   return (
     <Paper sx={{ bgcolor: 'background.paper', borderRadius: 3, p: 2.5, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-      {renderBar(t('stats.allPosts'), r => r.total_count, allTotal)}
-      {renderBar(t('stats.favorites'), r => r.liked_count, likedTotal)}
+      <RatingBar label={t('stats.allPosts')} ratings={ratings} getCount={r => r.total_count} total={allTotal} ratingNames={RATING_NAMES} tooltipRef={tooltipRef} t={t} />
+      <RatingBar label={t('stats.favorites')} ratings={ratings} getCount={r => r.liked_count} total={likedTotal} ratingNames={RATING_NAMES} tooltipRef={tooltipRef} t={t} />
       <Tooltip ref={tooltipRef} />
     </Paper>
   );
@@ -536,16 +577,18 @@ function AxisLabels({ buckets }) {
 }
 
 /** Shared tooltip */
-const Tooltip = React.forwardRef((_, ref) => (
-  <Box
-    ref={ref}
-    sx={{
-      position: 'fixed', display: 'none', pointerEvents: 'none', zIndex: 1200,
-      bgcolor: 'rgba(0,0,0,0.92)', color: '#fff', p: '10px 14px',
-      borderRadius: 2, fontSize: 12, lineHeight: 1.7, border: '1px solid #333',
-    }}
-  />
-));
+function Tooltip({ ref }) {
+  return (
+    <Box
+      ref={ref}
+      sx={{
+        position: 'fixed', display: 'none', pointerEvents: 'none', zIndex: 1200,
+        bgcolor: 'rgba(0,0,0,0.92)', color: '#fff', p: '10px 14px',
+        borderRadius: 2, fontSize: 12, lineHeight: 1.7, border: '1px solid #333',
+      }}
+    />
+  );
+}
 
 /** Legend row */
 function Legend({ items }) {
@@ -568,20 +611,20 @@ function Legend({ items }) {
 const StatsPage = () => {
   const { t } = useTranslation();
 
-  const statsQuery = useQuery({
+  const { data: statsData, isLoading: statsLoading, isError: statsErr, refetch: refetchStats } = useQuery({
     queryKey: ['stats-overview'],
     queryFn: getStatsOverview,
     staleTime: 5 * 60 * 1000,
   });
 
-  const prefsQuery = useQuery({
+  const { data: prefsData, isLoading: prefsLoading } = useQuery({
     queryKey: ['user-preferences'],
     queryFn: getUserPreferences,
     staleTime: 5 * 60 * 1000,
   });
 
-  const isLoading = statsQuery.isLoading || prefsQuery.isLoading;
-  const isError = statsQuery.isError;
+  const isLoading = statsLoading || prefsLoading;
+  const isError = statsErr;
 
   if (isLoading) {
     return (
@@ -599,14 +642,14 @@ const StatsPage = () => {
         <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, py: 8 }}>
           <ErrorIcon sx={{ fontSize: 48, color: 'error.main' }} />
           <Typography color="error">{t('status.loadError')}</Typography>
-          <Button variant="outlined" onClick={() => statsQuery.refetch()}>{t('actions.retry')}</Button>
+          <Button variant="outlined" onClick={() => refetchStats()}>{t('actions.retry')}</Button>
         </Box>
       </AppLayout>
     );
   }
 
-  const stats = statsQuery.data;
-  const prefs = prefsQuery.data?.preferences_by_type || {};
+  const stats = statsData;
+  const prefs = prefsData?.preferences_by_type || {};
 
   return (
     <AppLayout>

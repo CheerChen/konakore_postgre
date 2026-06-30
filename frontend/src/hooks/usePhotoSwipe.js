@@ -28,12 +28,14 @@ export function usePhotoSwipe({
 }) {
   const lightboxRef = useRef(null);
   const slideshowRef = useRef({ interval: null, isPlaying: false });
-  const groupMapRef = useRef(new Map());
+  const groupMapRef = useRef(null);
   // Flattened dataSource = each parent followed by its grouped children,
   // so the whole page (children included) forms ONE PhotoSwipe gallery.
-  const postIdToIndexRef = useRef(new Map());
+  const postIdToIndexRef = useRef(null);
   const postsLikeStateRef = useRef({});
   const postsRef = useRef([]);
+  const handleLikeChangeRef = useRef(handleLikeChange);
+  const handleTagClickRef = useRef(handleTagClick);
 
   // Portal 状态：当前激活的 postId 和 caption 容器 DOM 节点
   const [activePostId, setActivePostId] = useState(null);
@@ -43,6 +45,12 @@ export function usePhotoSwipe({
   useEffect(() => { groupMapRef.current = groupMap || new Map(); }, [groupMap]);
   useEffect(() => { postsLikeStateRef.current = postsLikeState; }, [postsLikeState]);
   useEffect(() => { postsRef.current = posts; }, [posts]);
+  useEffect(() => { handleLikeChangeRef.current = handleLikeChange; }, [handleLikeChange]);
+  useEffect(() => { handleTagClickRef.current = handleTagClick; }, [handleTagClick]);
+
+  // Lazy-init refs that need object allocation (avoid rebuilding every render).
+  if (groupMapRef.current === null) groupMapRef.current = new Map();
+  if (postIdToIndexRef.current === null) postIdToIndexRef.current = new Map();
 
   // PhotoSwipe 初始化（仅一次）
   useEffect(() => {
@@ -177,7 +185,7 @@ export function usePhotoSwipe({
 
           toggleLike(postId, currentLiked).then(() => {
             const newLiked = !currentLiked;
-            handleLikeChange(postId, newLiked);
+            handleLikeChangeRef.current(postId, newLiked);
             updateLikeButton(newLiked);
           }).catch(err => console.error('Like toggle failed:', err));
 
@@ -319,10 +327,10 @@ export function usePhotoSwipe({
     window.currentLightbox = lightbox;
 
     return () => {
-      if (slideshowRef.current.interval) {
-        clearInterval(slideshowRef.current.interval);
-        slideshowRef.current.interval = null;
-        slideshowRef.current.isPlaying = false;
+      if (slideshowState.interval) {
+        clearInterval(slideshowState.interval);
+        slideshowState.interval = null;
+        slideshowState.isPlaying = false;
       }
       if (lightboxRef.current) {
         lightboxRef.current.destroy();
@@ -331,7 +339,7 @@ export function usePhotoSwipe({
       window.currentLightbox = null;
       captionContainerRef.current = null;
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // eslint-disable-line react-doctor/exhaustive-deps
 
   // Sync dataSource when displayPosts / groupMap change.
   // Build a flattened gallery: for each displayed (parent) post, append it

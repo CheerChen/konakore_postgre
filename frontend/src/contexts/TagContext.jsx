@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useReducer, useEffect, useCallback } from 'react';
+import React, { createContext, use, useReducer, useEffect, useCallback } from 'react';
 import { tagManager } from '../utils/TagManager';
 
 // Context创建
@@ -168,24 +168,9 @@ export const TagProvider = ({ children }) => {
  * useTag Hook - 组件使用标签功能的统一接口
  */
 export const useTag = () => {
-  const context = useContext(TagContext);
+  const context = use(TagContext);
   if (!context) {
     throw new Error('useTag must be used within a TagProvider');
   }
   return context;
 };
-
-/**
- * 高阶组件：为组件提供标签功能
- */
-export const withTag = (Component) => {
-  return function WrappedComponent(props) {
-    return (
-      <TagProvider>
-        <Component {...props} />
-      </TagProvider>
-    );
-  };
-};
-
-export default TagContext;

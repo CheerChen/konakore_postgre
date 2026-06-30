@@ -25,7 +25,7 @@ const CaptionContent = ({ post, postsLikeState, getTagColors, getTagTranslation,
       <div style={{
         padding: '16px',
         background: 'rgba(0, 0, 0, 0.8)',
-        backdropFilter: 'blur(15px)',
+        backdropFilter: 'blur(8px)',
         borderRadius: '12px',
         margin: '8px',
         color: 'white',

@@ -172,8 +172,7 @@ function TaskRow({ task, expanded, onToggle }) {
   const progress = Math.max(0, Math.min(100, Number(task.progress_pct || 0)));
   const state = task.state || {};
   const details = DETAIL_KEYS
-    .filter((k) => state[k] !== null && state[k] !== undefined && state[k] !== '')
-    .map((k) => [k, state[k]]);
+    .flatMap((k) => (state[k] !== null && state[k] !== undefined && state[k] !== '' ? [[k, state[k]]] : []));
   const hasTotal =
     task.total_value !== null && task.total_value !== undefined && Number(task.total_value) > 0;
 
@@ -373,7 +372,7 @@ function TaskRow({ task, expanded, onToggle }) {
             </Stack>
           )}
 
-          {hasTotal && (
+          {Boolean(hasTotal) && (
             <Box sx={{ pb: 1 }}>
               <Typography
                 sx={{
@@ -456,16 +455,19 @@ function TaskRow({ task, expanded, onToggle }) {
 
 export default function TasksPage() {
   const { t } = useTranslation();
-  const tasksQuery = useQuery({
+  const { data: tasksData, isFetching: tasksFetching, isError: tasksErr, isLoading: tasksLoading, refetch: refetchTasks } = useQuery({
     queryKey: ['tasks'],
     queryFn: getTasks,
     refetchInterval: 5000,
   });
-  const tasks = tasksQuery.data || [];
+  const tasks = tasksData || [];
   const [overrides, setOverrides] = useState(() => new Map());
 
+  // Depend on the query data identity (stable per query key) instead of the
+  // derived `tasks` array, which is rebuilt every render.
   const sorted = useMemo(() => {
-    return [...tasks].sort((a, b) => {
+    const list = tasksData || [];
+    return list.toSorted((a, b) => {
       const sa = STATUS_ORDER[a.status] ?? 99;
       const sb = STATUS_ORDER[b.status] ?? 99;
       if (sa !== sb) return sa - sb;
@@ -474,11 +476,11 @@ export default function TasksPage() {
       }
       return new Date(b.last_run_at || 0) - new Date(a.last_run_at || 0);
     });
-  }, [tasks]);
+  }, [tasksData]);
 
   const errorCount = useMemo(
-    () => tasks.filter((task) => task.status === 'error').length,
-    [tasks],
+    () => (tasksData || []).reduce((acc, task) => acc + (task.status === 'error' ? 1 : 0), 0),
+    [tasksData],
   );
 
   const isExpanded = (task) =>
@@ -524,21 +526,21 @@ export default function TasksPage() {
           variant="outlined"
           size="small"
           startIcon={
-            tasksQuery.isFetching ? <CircularProgress size={14} /> : <RefreshIcon />
+            tasksFetching ? <CircularProgress size={14} /> : <RefreshIcon />
           }
-          onClick={() => tasksQuery.refetch()}
+          onClick={() => refetchTasks()}
         >
           {t('tasks.refresh')}
         </Button>
       </Stack>
 
-      {tasksQuery.isError && (
+      {tasksErr && (
         <Alert severity="error" sx={{ mb: 2 }}>
           {t('status.loadError')}
         </Alert>
       )}
 
-      {tasksQuery.isLoading ? (
+      {tasksLoading ? (
         <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
           <CircularProgress />
         </Box>

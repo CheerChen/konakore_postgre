@@ -1,7 +1,7 @@
 import { getTags } from '../api';
 
 // Tag类型常量定义
-export const TAG_TYPES = {
+const TAG_TYPES = {
   GENERAL: 0,
   ARTIST: 1,
   COPYRIGHT: 3,
@@ -10,7 +10,7 @@ export const TAG_TYPES = {
 };
 
 // TAGME标签列表 - 这些标签在计算时会被完全忽略
-export const TAGME_EXCLUDE_TAGS = [
+const TAGME_EXCLUDE_TAGS = [
   'tagme',                     // 通用tagme标签
   'tagme_(artist)',            // 画师未知标签
   'tagme_(character)',         // 角色未知标签
@@ -30,9 +30,11 @@ const RELEVANCE_FILTER_STORAGE_KEY = 'konakore_relevance_filter_config';
 // version, any persisted threshold is reset to 0.
 const RELEVANCE_FILTER_VERSION_KEY = 'konakore_relevance_filter_version';
 const RELEVANCE_FILTER_VERSION = 'cosine-v1';
+const TAGS_CACHE_KEY = 'konakore_tags_cache:v1';
+const TAG_INFO_CACHE_KEY = 'konakore_tag_info_cache:v1';
 
 // 检查是否为需要排除的tagme类型标签
-export const isTagmeTag = (tagName) => {
+const isTagmeTag = (tagName) => {
   // 直接匹配已知的tagme标签
   if (TAGME_EXCLUDE_TAGS.includes(tagName)) {
     return true;
@@ -129,7 +131,10 @@ class TagManager {
 
       const parsed = JSON.parse(raw);
       const tags = Array.isArray(parsed?.tags)
-        ? parsed.tags.filter(t => typeof t === 'string' && t.trim().length > 0).map(t => t.trim())
+        ? parsed.tags.reduce((acc, t) => {
+          if (typeof t === 'string' && t.trim().length > 0) acc.push(t.trim());
+          return acc;
+        }, [])
         : [...DEFAULT_EXCLUDED_POST_TAGS];
 
       this.state.excludedPostTagsConfig = { tags };
@@ -156,7 +161,10 @@ class TagManager {
 
   setExcludedPostTagsConfig(nextConfig) {
     const tags = Array.isArray(nextConfig?.tags)
-      ? nextConfig.tags.filter(t => typeof t === 'string' && t.trim().length > 0).map(t => t.trim())
+      ? nextConfig.tags.reduce((acc, t) => {
+        if (typeof t === 'string' && t.trim().length > 0) acc.push(t.trim());
+        return acc;
+      }, [])
       : [];
 
     this.state.excludedPostTagsConfig = { tags };
@@ -271,14 +279,14 @@ class TagManager {
   loadFromStorage() {
     try {
       // 加载基础标签缓存
-      const savedTags = localStorage.getItem('konakore_tags_cache');
+      const savedTags = localStorage.getItem(TAGS_CACHE_KEY);
       if (savedTags) {
         const tags = JSON.parse(savedTags);
         tags.forEach(tag => this.state.tags.add(tag));
       }
 
       // 加载标签信息缓存
-      const savedTagInfo = localStorage.getItem('konakore_tag_info_cache');
+      const savedTagInfo = localStorage.getItem(TAG_INFO_CACHE_KEY);
       if (savedTagInfo) {
         const tagInfoData = JSON.parse(savedTagInfo);
         tagInfoData.forEach(([name, info]) => {
@@ -299,11 +307,11 @@ class TagManager {
     try {
       // 保存基础标签缓存
       const tags = Array.from(this.state.tags);
-      localStorage.setItem('konakore_tags_cache', JSON.stringify(tags));
+      localStorage.setItem(TAGS_CACHE_KEY, JSON.stringify(tags));
 
       // 保存标签信息缓存
       const tagInfoData = Array.from(this.state.tagInfo.entries());
-      localStorage.setItem('konakore_tag_info_cache', JSON.stringify(tagInfoData));
+      localStorage.setItem(TAG_INFO_CACHE_KEY, JSON.stringify(tagInfoData));
     } catch (error) {
       console.warn('Failed to save tags to localStorage:', error);
     }
@@ -318,8 +326,8 @@ class TagManager {
     this.state.translations = null;
 
     try {
-      localStorage.removeItem('konakore_tags_cache');
-      localStorage.removeItem('konakore_tag_info_cache');
+      localStorage.removeItem(TAGS_CACHE_KEY);
+      localStorage.removeItem(TAG_INFO_CACHE_KEY);
     } catch (error) {
       console.warn('Failed to clear tags from localStorage:', error);
     }
@@ -486,7 +494,10 @@ class TagManager {
           item.textContent = newText;
         } else {
           // 如果有复杂结构，只更新文本节点
-          const textNode = Array.from(item.childNodes).find(node => node.nodeType === Node.TEXT_NODE);
+          let textNode = null;
+          for (const node of item.childNodes) {
+            if (node.nodeType === Node.TEXT_NODE) { textNode = node; break; }
+          }
           if (textNode) {
             textNode.textContent = newText;
           }

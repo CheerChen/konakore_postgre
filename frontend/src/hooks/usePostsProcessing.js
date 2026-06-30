@@ -5,7 +5,7 @@ import { tagManager } from '../utils/TagManager';
  * 排序函数 — HomePage / FavoritesPage 共用
  */
 function sortPosts(posts, sortOption) {
-  return [...posts].sort((a, b) => {
+  return posts.toSorted((a, b) => {
     switch (sortOption) {
       case 'score':
         return (b.data.score || 0) - (a.data.score || 0);

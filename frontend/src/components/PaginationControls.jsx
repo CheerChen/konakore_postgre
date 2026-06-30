@@ -151,7 +151,7 @@ const PaginationControls = ({
           </FormControl>
         )}
 
-        {onOpenImageSize && (
+        {Boolean(onOpenImageSize) && (
           <Tooltip title={t('grid.sizeTooltip')}>
             <IconButton onClick={onOpenImageSize} size="small" aria-label="image size">
               <ImageSizeIcon />
@@ -159,7 +159,7 @@ const PaginationControls = ({
           </Tooltip>
         )}
 
-        {onOpenRelevanceFilter && (
+        {Boolean(onOpenRelevanceFilter) && (
           <Tooltip title={relevanceRemovedCount > 0 ? t('filter.relevanceFilterTooltip', { count: relevanceRemovedCount }) : t('filter.relevanceFilterTooltipDefault')}>
             <IconButton onClick={onOpenRelevanceFilter} size="small" aria-label="relevance filter">
               <Badge badgeContent={relevanceRemovedCount > 0 ? relevanceRemovedCount : null} color="error" max={999}>
@@ -169,7 +169,7 @@ const PaginationControls = ({
           </Tooltip>
         )}
 
-        {onOpenExcludedTags && (
+        {Boolean(onOpenExcludedTags) && (
           <Tooltip title={excludedCountOnPage > 0 ? t('filter.excludedTagsTooltip', { count: excludedCountOnPage }) : t('filter.excludedTagsTooltipDefault')}>
             <IconButton onClick={onOpenExcludedTags} size="small" aria-label="excluded tags filter">
               <Badge badgeContent={excludedCountOnPage > 0 ? excludedCountOnPage : null} color="warning" max={999}>

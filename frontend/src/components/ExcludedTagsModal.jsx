@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
     Autocomplete,
     Box,
@@ -16,31 +16,57 @@ import {
 import { useTranslation } from 'react-i18next';
 import { tagManager } from '../utils/TagManager';
 
-export default function ExcludedTagsModal({ open, onClose, excludedTags = [], onExcludedTagsChange, excludedCountOnPage = 0 }) {
+const EMPTY_TAGS = [];
+
+const suggestInitialState = { suggestions: [], isLoading: false };
+
+function suggestReducer(state, action) {
+    switch (action.type) {
+        case 'RESET':
+        case 'CLEAR':
+            return suggestInitialState;
+        case 'LOADING':
+            return { ...state, isLoading: true };
+        case 'SET':
+            return { suggestions: action.suggestions, isLoading: false };
+        default:
+            return state;
+    }
+}
+
+const normalizeTagList = (tags) =>
+    Array.from(new Set(
+        tags.flatMap(t => {
+            const v = (typeof t === 'string' ? t : String(t || '')).trim();
+            return v ? [v] : [];
+        })
+    ));
+
+export default function ExcludedTagsModal({ open, onClose, excludedTags = EMPTY_TAGS, onExcludedTagsChange, excludedCountOnPage = 0 }) {
     const { t } = useTranslation();
     const [inputValue, setInputValue] = useState('');
-    const [suggestions, setSuggestions] = useState([]);
-    const [isLoading, setIsLoading] = useState(false);
+    const [suggest, dispatch] = useReducer(suggestReducer, suggestInitialState);
 
+    // Reset local state when the modal opens (ref-based prev comparison, no effect).
+    const prevOpenRef = useRef(open);
+    if (open !== prevOpenRef.current) {
+        prevOpenRef.current = open;
+        if (open) {
+            setInputValue('');
+            dispatch({ type: 'RESET' });
+        }
+    }
+
+    // Debounced local-cache lookup; depends only on inputValue (state).
     useEffect(() => {
-        if (!open) return;
-        setInputValue('');
-        setSuggestions([]);
-    }, [open]);
-
-    // 过滤 Modal 的建议：只查本地缓存（不走 API）
-    useEffect(() => {
-        if (!open) return;
-
         const query = inputValue.trim().toLowerCase();
         if (!query) {
-            setSuggestions([]);
-            setIsLoading(false);
+            dispatch({ type: 'CLEAR' });
             return;
         }
 
-        setIsLoading(true);
-        const t = setTimeout(() => {
+        dispatch({ type: 'LOADING' });
+        const timer = setTimeout(() => {
             const cached = tagManager.getCachedTags();
             const match = cached
                 .filter(tg => typeof tg === 'string' && tg.toLowerCase().includes(query))
@@ -53,26 +79,16 @@ export default function ExcludedTagsModal({ open, onClose, excludedTags = [], on
                 })
                 .slice(0, 50);
 
-            setSuggestions(match);
-            setIsLoading(false);
+            dispatch({ type: 'SET', suggestions: match });
         }, 150);
 
-        return () => clearTimeout(t);
-    }, [open, inputValue]);
+        return () => clearTimeout(timer);
+    }, [inputValue]);
 
-    const normalizedTags = useMemo(() => {
-        const cleaned = excludedTags
-            .map(t => (typeof t === 'string' ? t : String(t || '')).trim())
-            .filter(Boolean);
-        return Array.from(new Set(cleaned));
-    }, [excludedTags]);
+    const normalizedTags = useMemo(() => normalizeTagList(excludedTags), [excludedTags]);
 
     const handleTagsChange = (_, newValue) => {
-        const cleaned = newValue
-            .map(t => (typeof t === 'string' ? t : String(t || '')).trim())
-            .filter(Boolean);
-        const unique = Array.from(new Set(cleaned));
-        onExcludedTagsChange?.(unique);
+        onExcludedTagsChange?.(normalizeTagList(newValue));
     };
 
     const handleClear = () => {
@@ -103,8 +119,8 @@ export default function ExcludedTagsModal({ open, onClose, excludedTags = [], on
                         inputValue={inputValue}
                         onInputChange={(_, v) => setInputValue(v)}
                         onChange={handleTagsChange}
-                        options={suggestions}
-                        loading={isLoading}
+                        options={suggest.suggestions}
+                        loading={suggest.isLoading}
                         getOptionLabel={(option) => (typeof option === 'string' ? option : String(option || ''))}
                         isOptionEqualToValue={(option, value) => option === value}
                         filterOptions={(options, { inputValue: fv }) => {
@@ -122,7 +138,7 @@ export default function ExcludedTagsModal({ open, onClose, excludedTags = [], on
                         renderTags={(tagValue, getTagProps) =>
                             tagValue.map((option, index) => (
                                 <Chip
-                                    key={`${option}-${index}`}
+                                    key={option}
                                     label={option}
                                     {...getTagProps({ index })}
                                     size="small"

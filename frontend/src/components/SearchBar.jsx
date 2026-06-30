@@ -2,7 +2,9 @@ import React, { useState } from 'react';
 import { Autocomplete, TextField, Box, Chip } from '@mui/material';
 import { useTranslation } from 'react-i18next';
 
-const SearchBar = ({ onSearch, searchQuery, onClearSearch, totalPosts, availableTags = [] }) => {
+const EMPTY_TAGS = [];
+
+const SearchBar = ({ onSearch, searchQuery, onClearSearch, totalPosts, availableTags = EMPTY_TAGS }) => {
   const { t } = useTranslation();
   const [inputValue, setInputValue] = useState('');
 
@@ -77,7 +79,7 @@ const SearchBar = ({ onSearch, searchQuery, onClearSearch, totalPosts, available
         renderTags={(tagValue, getTagProps) =>
           tagValue.map((option, index) => (
             <Chip
-              key={index}
+              key={option}
               label={option}
               {...getTagProps({ index })}
               onDelete={() => onClearSearch()}

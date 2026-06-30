@@ -4,7 +4,6 @@ import HomePage from './pages/HomePage';
 import FavoritesPage from './pages/FavoritesPage';
 import StatsPage from './pages/StatsPage';
 import TasksPage from './pages/TasksPage';
-import StackDemo from './pages/StackDemo';
 import { TagProvider } from './contexts/TagContext';
 
 function App() {
@@ -16,7 +15,6 @@ function App() {
           <Route path="/favorites" element={<FavoritesPage />} />
           <Route path="/stats" element={<StatsPage />} />
           <Route path="/tasks" element={<TasksPage />} />
-          <Route path="/stack-demo" element={<StackDemo />} />
         </Routes>
       </Router>
     </TagProvider>

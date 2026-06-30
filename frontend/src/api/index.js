@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-export const apiClient = axios.create({
+const apiClient = axios.create({
   baseURL: '/api',
 });
 
@@ -38,12 +38,12 @@ export const searchTags = async (query, page = 1, pageSize = 100, liked = null) 
   return response.data;
 };
 
-export const likePost = async (postId) => {
+const likePost = async (postId) => {
   const response = await apiClient.post(`/v1/posts/${postId}:like`);
   return response.data;
 };
 
-export const unlikePost = async (postId) => {
+const unlikePost = async (postId) => {
   const response = await apiClient.post(`/v1/posts/${postId}:unlike`);
   return response.data;
 };
@@ -67,7 +67,7 @@ export const getStatsOverview = async () => {
   return response.data;
 };
 
-export const getPageForId = async (id, limit, liked = null) => {
+const getPageForId = async (id, limit, liked = null) => {
   const params = new URLSearchParams({ id: id.toString(), limit: limit.toString() });
   if (liked !== null) params.append('liked', liked.toString());
   const response = await apiClient.get(`/v1/posts/page-for-id?${params}`);

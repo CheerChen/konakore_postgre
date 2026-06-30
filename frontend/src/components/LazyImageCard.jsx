@@ -1,23 +1,115 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useEffect, useReducer, useRef, useState } from 'react';
 import { Card, CardMedia, IconButton, Box, Skeleton, Fade, Grow } from '@mui/material';
 import FavoriteBorderIcon from '@mui/icons-material/FavoriteBorder';
 import FavoriteIcon from '@mui/icons-material/Favorite';
 import CloudOffIcon from '@mui/icons-material/CloudOff';
 import ImageNotSupportedIcon from '@mui/icons-material/ImageNotSupported';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useInView } from 'react-intersection-observer';
 import { useTranslation } from 'react-i18next';
 import { toggleLike } from '../api';
 import { getImageUrl } from '../utils/imageUtils';
 import { connectivityService } from '../utils/ConnectivityService';
 
-const LazyImageCard = ({ post, index, onImageClick, onLikeChange, onNotify, groupCount, groupMembers = [] }) => {
+const EMPTY_MEMBERS = [];
+
+// Image load state — grouped so one logical update is one render.
+const imageStateInit = () => ({ loaded: false, error: false, shouldLoad: false });
+
+function imageStateReducer(state, action) {
+  switch (action.type) {
+    case 'ENTER_VIEW':
+      return state.shouldLoad ? state : { ...state, shouldLoad: true };
+    case 'LOADED':
+      return { ...state, loaded: true, error: false };
+    case 'ERROR':
+      return { ...state, loaded: false, error: true };
+    case 'RESET':
+      return imageStateInit();
+    case 'RETRY':
+      return { loaded: false, error: false, shouldLoad: false };
+    case 'RETRY_CONFIRM':
+      return { loaded: false, error: false, shouldLoad: true };
+    default:
+      return state;
+  }
+}
+
+// Error / offline placeholder — extracted so the parent stays readable.
+function ImageError({ isOffline }) {
+  return (
+    <Grow in={true} timeout={400}>
+      <Box
+        sx={{
+          width: '100%',
+          height: '100%',
+          minHeight: 200,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: 'grey.800',
+          color: 'grey.500',
+          cursor: 'default',
+          textAlign: 'center',
+          px: 2,
+          gap: 1
+        }}
+      >
+        {isOffline ? (
+          <CloudOffIcon sx={{ fontSize: 52, color: 'grey.500' }} />
+        ) : (
+          <ImageNotSupportedIcon sx={{ fontSize: 52, color: 'grey.500' }} />
+        )}
+      </Box>
+    </Grow>
+  );
+}
+
+// Like button — extracted so the parent stays readable.
+function LikeButton({ isLiked, isPending, onClick }) {
+  return (
+    <Fade in={true} timeout={800}>
+      <Box
+        sx={{
+          position: 'absolute',
+          bottom: 8,
+          right: 8,
+          backgroundColor: 'rgba(0, 0, 0, 0.4)',
+          borderRadius: '50%',
+        }}
+      >
+        <IconButton
+          aria-label="add to favorites"
+          onClick={onClick}
+          disabled={isPending}
+          size="small"
+          sx={{
+            minWidth: 44,
+            minHeight: 44,
+            transition: 'transform 0.2s ease',
+            '&:hover': {
+              transform: 'scale(1.1)',
+            }
+          }}
+        >
+          {isLiked ? (
+            <FavoriteIcon sx={{ color: 'red' }} fontSize="inherit" />
+          ) : (
+            <FavoriteBorderIcon sx={{ color: 'white' }} fontSize="inherit" />
+          )}
+        </IconButton>
+      </Box>
+    </Fade>
+  );
+}
+
+const LazyImageCard = ({ post, index, onImageClick, onLikeChange, onNotify, groupCount, groupMembers = EMPTY_MEMBERS }) => {
   const { t } = useTranslation();
-  const [imageLoaded, setImageLoaded] = useState(false);
-  const [imageError, setImageError] = useState(false);
-  const [isLiked, setIsLiked] = useState(post.liked);
-  const [shouldLoadImage, setShouldLoadImage] = useState(false);
-  const [isOffline, setIsOffline] = useState(!connectivityService.isOnline);
+  const queryClient = useQueryClient();
+  const [imageState, dispatch] = useReducer(imageStateReducer, undefined, imageStateInit);
+  const [isLiked, setIsLiked] = useState(() => post.liked);
+  const [isOffline, setIsOffline] = useState(() => !connectivityService.isOnline);
   const [hovered, setHovered] = useState(false);
   const imgRef = useRef(null);
 
@@ -29,17 +121,21 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange, onNotify, grou
 
   // 进入视口即加载
   useEffect(() => {
-    if (inView) {
-      setShouldLoadImage(true);
-    }
+    if (inView) dispatch({ type: 'ENTER_VIEW' });
   }, [inView]);
 
   // 缓存命中时 onLoad 可能在 React 挂载前就触发了，用 img.complete 兜底
   useEffect(() => {
-    if (shouldLoadImage && !imageLoaded && !imageError && imgRef.current?.complete && imgRef.current.naturalWidth > 0) {
-      setImageLoaded(true);
+    if (
+      imageState.shouldLoad &&
+      !imageState.loaded &&
+      !imageState.error &&
+      imgRef.current?.complete &&
+      imgRef.current.naturalWidth > 0
+    ) {
+      dispatch({ type: 'LOADED' });
     }
-  });
+  }, [imageState.shouldLoad, imageState.loaded, imageState.error]);
 
   // 监听连通性服务
   useEffect(() => {
@@ -47,36 +143,29 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange, onNotify, grou
       setIsOffline(!online);
 
       // 如果网络恢复，且当前图片处于错误状态，且在视野内，则重试
-      if (online && imageError && inView) {
+      if (online && imageState.error && inView) {
         console.log(`Network restored, retrying image for post ${post.id}`);
-        setImageError(false);
-        setImageLoaded(false);
-        // 强制重新渲染图片
-        setShouldLoadImage(false);
-        setTimeout(() => setShouldLoadImage(true), 50);
+        dispatch({ type: 'RETRY' });
+        setTimeout(() => dispatch({ type: 'RETRY_CONFIRM' }), 50);
       }
     };
 
-    // 订阅状态变化
     const unsubscribe = connectivityService.subscribe(handleConnectivityChange);
     return unsubscribe;
-  }, [imageError, inView, post.id]);
+  }, [imageState.error, inView, post.id]);
 
-  // 重置状态当 post id 变化
-  useEffect(() => {
-    setImageLoaded(false);
-    setImageError(false);
-  }, [post.id]);
+  // 重置图片状态当 post id 变化（ref-based prev comparison, no effect）
+  const prevPostIdRef = useRef(post.id);
+  if (post.id !== prevPostIdRef.current) {
+    prevPostIdRef.current = post.id;
+    dispatch({ type: 'RESET' });
+  }
 
-  const handleImageLoad = () => {
-    setImageLoaded(true);
-    setImageError(false);
-  };
+  const handleImageLoad = () => dispatch({ type: 'LOADED' });
 
   const handleImageError = () => {
     console.warn(`Image load failed for post ${post.id}`);
-    setImageError(true);
-    setImageLoaded(false);
+    dispatch({ type: 'ERROR' });
     connectivityService.reportFailure();
   };
 
@@ -85,6 +174,9 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange, onNotify, grou
     onSuccess: (data) => {
       const newLikedState = !isLiked;
       setIsLiked(newLikedState);
+      // Keep the posts list cache in sync after a like toggle.
+      queryClient.invalidateQueries({ queryKey: ['posts'] });
+      queryClient.invalidateQueries({ queryKey: ['favorites'] });
       if (onLikeChange) {
         onLikeChange(post.id, newLikedState);
       }
@@ -208,10 +300,10 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange, onNotify, grou
             transition: 'transform 0.28s cubic-bezier(0.34,1.56,0.64,1)',
           }}
         >
-          {shouldLoadImage ? (
+          {imageState.shouldLoad ? (
             <>
               {/* img 始终正常布局占位，Skeleton 绝对定位覆盖其上 */}
-              {!imageError && (
+              {!imageState.error && (
                 <CardMedia
                   ref={imgRef}
                   component="img"
@@ -225,7 +317,7 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange, onNotify, grou
                     width: '100%',
                     height: '100%',
                     objectFit: 'cover',
-                    opacity: imageLoaded ? 1 : 0,
+                    opacity: imageState.loaded ? 1 : 0,
                     cursor: 'pointer',
                     transition: 'opacity 0.3s ease',
                     '@media (prefers-reduced-motion: reduce)': {
@@ -235,7 +327,7 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange, onNotify, grou
                 />
               )}
 
-              {(!imageLoaded && !imageError) && (
+              {(!imageState.loaded && !imageState.error) && (
                 <Skeleton
                   variant="rectangular"
                   animation="wave"
@@ -249,69 +341,18 @@ const LazyImageCard = ({ post, index, onImageClick, onLikeChange, onNotify, grou
                 />
               )}
 
-              {imageError && (
-                <Grow in={true} timeout={400}>
-                  <Box
-                    sx={{
-                      width: '100%',
-                      height: '100%',
-                      minHeight: 200,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      backgroundColor: 'grey.800',
-                      color: 'grey.500',
-                      cursor: 'default',
-                      textAlign: 'center',
-                      px: 2,
-                      gap: 1
-                    }}
-                  >
-                    {isOffline ? (
-                      <CloudOffIcon sx={{ fontSize: 52, color: 'grey.500' }} />
-                    ) : (
-                      <ImageNotSupportedIcon sx={{ fontSize: 52, color: 'grey.500' }} />
-                    )}
-                  </Box>
-                </Grow>
+              {imageState.error && <ImageError isOffline={isOffline} />}
+
+              {imageState.loaded && (
+                <LikeButton
+                  isLiked={isLiked}
+                  isPending={mutation.isPending}
+                  onClick={handleLike}
+                />
               )}
 
-              <Fade in={imageLoaded} timeout={800}>
-                <Box
-                  sx={{
-                    position: 'absolute',
-                    bottom: 8,
-                    right: 8,
-                    backgroundColor: 'rgba(0, 0, 0, 0.4)',
-                    borderRadius: '50%',
-                  }}
-                >
-                  <IconButton
-                    aria-label="add to favorites"
-                    onClick={handleLike}
-                    disabled={mutation.isPending}
-                    size="small"
-                    sx={{
-                      minWidth: 44,
-                      minHeight: 44,
-                      transition: 'transform 0.2s ease',
-                      '&:hover': {
-                        transform: 'scale(1.1)',
-                      }
-                    }}
-                  >
-                    {isLiked ? (
-                      <FavoriteIcon sx={{ color: 'red' }} fontSize="inherit" />
-                    ) : (
-                      <FavoriteBorderIcon sx={{ color: 'white' }} fontSize="inherit" />
-                    )}
-                  </IconButton>
-                </Box>
-              </Fade>
-
               {/* 分组数量 badge */}
-              {groupCount > 1 && imageLoaded && (
+              {groupCount > 1 && imageState.loaded && (
                 <Fade in={true} timeout={800}>
                   <Box
                     sx={{
